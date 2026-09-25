@@ -1,24 +1,21 @@
 import { Link, useParams } from 'react-router-dom'
-import { Clock } from 'lucide-react'
+import { Clock, ShieldAlert } from 'lucide-react'
 import { useStore } from '../store'
 import {
   ANESTHESIA_LABEL,
   ANTS_ITEMS,
+  AREA_LABEL,
   ENTRUSTMENT,
-  FOLLOWUP_LABEL,
-  GLOBAL_ITEMS,
   MINICEX_ITEMS,
-  PROF_ITEMS,
-  RISK_LABEL,
   SHIFT_LABEL,
   SUPERVISION,
-  specialtyLabel,
   type Item,
 } from '../data/catalog'
 import { userById } from '../data/users'
 import { fmtDateLong, fmtDuration } from '../lib/dates'
+import { procLabel } from '../lib/stats'
 import { Avatar, TopBar } from '../components/ui'
-import { ProcLine } from '../components/case'
+import { ProcLine, caseTitle } from '../components/case'
 
 function Dots({ value, max }: { value: number | null; max: number }) {
   if (value === null) return <span className="tiny muted">N/O</span>
@@ -55,23 +52,29 @@ function ScoreList({ title, items, values, max }: { title: string; items: Item[]
 
 export default function CaseDetail() {
   const { id, rid } = useParams()
-  const { user, cases } = useStore()
+  const { user, cases, saveCase } = useStore()
   const c = cases.find((x) => x.id === id)
-  if (!c) return <TopBar title="Caso no encontrado" back />
+  if (!c) return <TopBar title="Caso no encontrado" back fallback="/" />
+  const me = user!
   const resident = userById(c.residentId)
-  const att = userById(c.evaluation?.attendingId ?? c.attendingId)
+  const isAtt = me.role === 'adscrito'
   const e = c.evaluation
-  const isAtt = user!.role === 'adscrito'
+  const evaluator = e ? userById(e.attendingId) : c.attendingId ? userById(c.attendingId) : null
+  const canEvaluate = isAtt && c.status === 'pendiente' && (c.attendingId === me.id || (!c.attendingId && me.profesor))
+  const canReview = !!me.profesor && !!e?.needsProfessorReview && !c.professorReview
+
+  const resolve = (include: boolean) =>
+    saveCase({ ...c, professorReview: { professorId: me.id, reviewedAt: new Date().toISOString(), include } })
 
   return (
     <>
-      <TopBar title={c.surgery} sub={fmtDateLong(c.date)} back={rid ? `/a/residente/${rid}` : true} />
+      <TopBar title={caseTitle(c)} sub={fmtDateLong(c.date)} back fallback={isAtt ? '/a' : '/r'} />
       <div className="screen">
         <div className="card">
           <div className="row">
-            <Avatar name={isAtt ? resident.name : att.name} att={!isAtt} />
+            <Avatar name={isAtt ? resident.name : evaluator?.name ?? resident.name} att={!isAtt} />
             <div className="grow">
-              <div className="bold">{isAtt ? resident.short : att.short}</div>
+              <div className="bold">{isAtt ? resident.short : evaluator?.short ?? 'Sin adscrito'}</div>
               <div className="tiny muted">{isAtt ? `Residente ${c.grade}` : e ? 'Evaluó este caso' : 'Adscrito responsable'}</div>
             </div>
             {c.status === 'pendiente' ? (
@@ -83,84 +86,124 @@ export default function CaseDetail() {
             )}
           </div>
           <div className="row wrap mt12" style={{ gap: 6 }}>
-            <span className="badge">{specialtyLabel(c.specialty)}</span>
+            <span className="badge">{AREA_LABEL[c.area]}</span>
             <span className="badge">
               ASA {c.asa}
               {c.urgency === 'urgente' ? 'E' : ''}
             </span>
             <span className="badge">{ANESTHESIA_LABEL[c.anesthesia]}</span>
-            <span className="badge">Complejidad {c.complexity}</span>
             <span className="badge">
-              {c.room} · {c.startTime} · {SHIFT_LABEL[c.shift]}
+              {c.startTime} · {SHIFT_LABEL[c.shift]}
             </span>
             {c.comorbidities.map((m) => (
               <span key={m} className="badge brand">
                 {m}
               </span>
             ))}
-            {c.criticalEvent !== 'no' && <span className="badge crit">Evento crítico {c.criticalEvent}</span>}
+            {!c.usualForGrade && <span className="badge warn">No habitual para su grado</span>}
           </div>
-          {c.residentNote && (
-            <div className="feedback-quote mt12">
-              <div className="tiny muted bold">NOTA DEL RESIDENTE</div>
-              <div className="small">"{c.residentNote}"</div>
+          {c.criticalEvent && (
+            <div className="card flat mt12" style={{ background: 'var(--warn-soft)', border: 0 }}>
+              <div className="tiny bold" style={{ color: 'var(--warn-ink)' }}>
+                EVENTO CRÍTICO
+              </div>
+              <div className="small">{c.criticalEventNote}</div>
+            </div>
+          )}
+          {!c.attendingId && (
+            <div className="card flat mt12 row" style={{ background: 'var(--crit-soft)', border: 0 }}>
+              <ShieldAlert size={18} color="var(--crit)" />
+              <div className="small bold" style={{ color: '#a32424' }}>
+                Caso sin adscrito · {c.supervisionGap === 'residente-mayor' ? 'con residente de mayor jerarquía' : 'estuvo solo'}
+              </div>
             </div>
           )}
         </div>
 
-        {c.procedures.length > 0 && (
-          <>
-            <div className="h2">Procedimientos</div>
-            <div className="stack">
+        {/* ───── Lo que reportó el residente ───── */}
+        <div className="h2">
+          Autoevaluación del residente
+          <span className="badge brand">Registro</span>
+        </div>
+        <div className="card" style={{ borderLeft: '4px solid var(--accent)' }}>
+          <div className="tiny muted bold">FORTALEZA, DIFICULTAD U OPORTUNIDAD</div>
+          <div className="small">"{c.residentReflection}"</div>
+          {c.residentNote && (
+            <>
+              <div className="tiny muted bold mt12">NOTA PARA EL ADSCRITO</div>
+              <div className="small">"{c.residentNote}"</div>
+            </>
+          )}
+          {c.procedures.length > 0 && (
+            <div className="stack mt16" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
               {c.procedures.map((p) => (
-                <div key={p.id} className="card tight">
-                  <ProcLine p={p} />
+                <div key={p.id}>
+                  <ProcLine p={p} score={e?.supervision[p.id]} />
                   {p.notes && <div className="small ink2 mt8">{p.notes}</div>}
-                  <Link to={rid ? `/a/residente/${rid}/procedimiento/${p.type}` : isAtt ? `/a/residente/${c.residentId}/procedimiento/${p.type}` : `/r/procedimiento/${p.type}`} className="small bold mt8" style={{ display: 'block', color: 'var(--accent-ink)' }}>
+                  <Link
+                    to={rid ? `/a/residente/${rid}/procedimiento/${p.type}` : isAtt ? `/a/residente/${c.residentId}/procedimiento/${p.type}` : `/r/procedimiento/${p.type}`}
+                    className="small bold"
+                    style={{ display: 'block', color: 'var(--accent-ink)', marginTop: 6 }}
+                  >
                     Ver curva CUSUM →
                   </Link>
                 </div>
               ))}
             </div>
-          </>
-        )}
+          )}
+        </div>
 
-        {!e && (
-          <div className="card mt16 center">
-            {isAtt && c.attendingId === user!.id ? (
-              <>
-                <div className="bold">Este caso espera tu evaluación</div>
-                <Link to={`/a/evaluar/${c.id}`} className="btn primary block mt12">
-                  Evaluar ahora (≈ 2 min)
-                </Link>
-              </>
-            ) : (
-              <div className="small ink2">
-                Esperando evaluación de <b>{att.short}</b>
-              </div>
-            )}
-          </div>
-        )}
-
-        {e && (
+        {/* ───── Lo que puso quien evaluó ───── */}
+        {!e ? (
           <>
             <div className="h2">
               Evaluación
-              <span className="tiny muted">
-                {e.version === 'completa' ? 'Versión completa' : 'Versión corta'}
-                {e.durationSec ? ` · ${fmtDuration(e.durationSec)} min` : ''}
-              </span>
+              <span className="badge warn">Pendiente</span>
+            </div>
+            <div className="card center">
+              {canEvaluate ? (
+                <>
+                  <div className="bold">Este caso espera tu evaluación</div>
+                  <Link to={`/a/evaluar/${c.id}`} className="btn primary block mt12">
+                    Evaluar ahora
+                  </Link>
+                </>
+              ) : (
+                <div className="small ink2">
+                  {c.attendingId ? (
+                    <>
+                      Esperando evaluación de <b>{evaluator?.short}</b>
+                    </>
+                  ) : (
+                    <>Esperando revisión de un profesor</>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="h2">
+              Evaluación del adscrito
+              <span className="tiny muted">{e.durationSec ? `${fmtDuration(e.durationSec)} min` : ''}</span>
             </div>
             <div className="hero-card">
-              <div className="muted tiny bold">SUPERVISIÓN QUE REQUIRIÓ (O-SCORE)</div>
-              <div className="row mt8" style={{ alignItems: 'flex-start' }}>
-                <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1 }}>{e.supervision}</div>
-                <div className="small" style={{ marginTop: 2 }}>
-                  {SUPERVISION[e.supervision - 1].text}
-                </div>
+              <div className="muted tiny bold">O-SCORE POR PROCEDIMIENTO</div>
+              <div className="stack mt8">
+                {c.procedures.map((p) => (
+                  <div key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,.14)', paddingBottom: 8 }}>
+                    <div className="tiny muted">{procLabel(p)}</div>
+                    <div className="row" style={{ alignItems: 'flex-start' }}>
+                      <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>{e.supervision[p.id]}</div>
+                      <div className="small" style={{ marginTop: 4 }}>
+                        {SUPERVISION[e.supervision[p.id] - 1].text}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {!c.procedures.length && <div className="small muted">Caso sin procedimientos registrados.</div>}
               </div>
-              <div style={{ borderTop: '1px solid rgba(255,255,255,.18)', margin: '14px 0 10px' }} />
-              <div className="muted tiny bold">PARA UN CASO SIMILAR ESTÁ LISTO PARA</div>
+              <div className="muted tiny bold mt16">ENTRUSTMENT DEL CASO</div>
               <div className="row mt8" style={{ alignItems: 'flex-start' }}>
                 <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>{e.entrustment}</div>
                 <div className="small">{ENTRUSTMENT[e.entrustment - 1].text}</div>
@@ -176,36 +219,59 @@ export default function CaseDetail() {
                 <div className="tiny muted bold">PRIORIDAD DE MEJORA</div>
                 <div style={{ fontSize: 15 }}>{e.improve}</div>
               </div>
-              {e.plan && (
+              {e.comments && (
                 <div className="feedback-quote mt16" style={{ borderLeftColor: 'var(--series-1)' }}>
-                  <div className="tiny muted bold">PLAN PARA EL SIGUIENTE CASO</div>
-                  <div style={{ fontSize: 15 }}>{e.plan}</div>
+                  <div className="tiny muted bold">COMENTARIOS</div>
+                  <div style={{ fontSize: 15 }}>{e.comments}</div>
                 </div>
               )}
             </div>
 
             <ScoreList title="Habilidades no técnicas (ANTS)" items={ANTS_ITEMS} values={e.ants} max={4} />
-            <ScoreList title={e.version === 'completa' ? 'Mini-CEX' : 'Juicio clínico'} items={MINICEX_ITEMS} values={e.miniCex} max={5} />
-            <ScoreList title="Desempeño global" items={GLOBAL_ITEMS} values={e.global} max={5} />
-            <ScoreList title="Profesionalismo" items={PROF_ITEMS} values={e.professionalism} max={5} />
+            <ScoreList title="Mini-CEX" items={MINICEX_ITEMS} values={e.miniCex} max={5} />
 
             <div className="h2">Cierre</div>
             <div className="list">
               <div className="list-row">
-                <span className="grow small">Cuenta para progresión</span>
-                <b className="small">{e.countsForProgression ? 'Sí' : 'No'}</b>
+                <span className="grow small">Amerita revisión de un profesor</span>
+                <b className="small">{e.needsProfessorReview ? 'Sí' : 'No'}</b>
               </div>
               <div className="list-row">
-                <span className="grow small">Seguimiento</span>
-                <b className="small" style={{ textAlign: 'right' }}>
-                  {FOLLOWUP_LABEL[e.followUp]}
-                </b>
-              </div>
-              <div className="list-row">
-                <span className="grow small">Riesgo atribuible</span>
-                <b className="small">{RISK_LABEL[e.patientRisk]}</b>
+                <span className="grow small">Riesgo atribuible al residente</span>
+                <b className="small">{e.patientRisk ? 'Sí' : 'No'}</b>
               </div>
             </div>
+            {e.patientRisk && e.patientRiskNote && (
+              <div className="card flat mt8" style={{ background: 'var(--crit-soft)', border: 0 }}>
+                <div className="tiny bold" style={{ color: '#a32424' }}>
+                  RIESGO REPORTADO
+                </div>
+                <div className="small">{e.patientRiskNote}</div>
+              </div>
+            )}
+
+            {c.professorReview && (
+              <div className="card mt12">
+                <div className="tiny muted bold">REVISIÓN DEL PROFESOR</div>
+                <div className="small">
+                  {userById(c.professorReview.professorId).short} · {c.professorReview.include ? 'Se incluye en el progreso' : 'Se excluye del progreso'}
+                </div>
+              </div>
+            )}
+            {canReview && (
+              <div className="card mt12">
+                <div className="bold small">Este caso amerita tu revisión</div>
+                <div className="tiny muted mt8">Decide si cuenta para el progreso del residente.</div>
+                <div className="row mt12">
+                  <button className="btn block" onClick={() => resolve(false)}>
+                    Excluir
+                  </button>
+                  <button className="btn primary block" onClick={() => resolve(true)}>
+                    Incluir
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

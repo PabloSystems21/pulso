@@ -4,7 +4,19 @@ import { ChevronRight } from 'lucide-react'
 import { useStore } from '../store'
 import { userById } from '../data/users'
 import { ANTS_DOMAINS, ANTS_TARGET, GRADE_EXPECTATIONS, SUPERVISION, expectedBand } from '../data/catalog'
-import { antsDomains, avg, casesOf, evaluatedOf, juicio, monthsIntoGrade, monthsIntoGradeAt, procedureSummaries, residentAlerts, rolling } from '../lib/stats'
+import {
+  antsDomains,
+  avg,
+  caseSupervision,
+  casesOf,
+  chartCases,
+  juicio,
+  monthsIntoGrade,
+  monthsIntoGradeAt,
+  procedureSummaries,
+  residentAlerts,
+  rolling,
+} from '../lib/stats'
 import { daysBetween, fmtRelative, parseDate, todayISO } from '../lib/dates'
 import { AlertCard, Avatar, CusumBadge, Kpi, TopBar } from '../components/ui'
 import { DomainBars, ORDINAL_BLUE, Sparkline, StackedBar, TrendChart } from '../components/charts'
@@ -18,31 +30,43 @@ export default function Progress() {
   const nav = useNavigate()
   const u = userById(rid ?? user!.id)
   const base = rid ? `/a/residente/${rid}` : '/r'
+  const isProfView = !!rid
   const [range, setRange] = useState<Range>('6m')
 
   const mine = useMemo(() => casesOf(cases, u.id), [cases, u.id])
-  const evals = useMemo(() => evaluatedOf(mine), [mine])
+  const evals = useMemo(() => chartCases(mine), [mine])
   const inRange = evals.filter((c) => daysBetween(c.date, todayISO()) <= RANGE_DAYS[range])
   const procs = useMemo(() => procedureSummaries(mine), [mine])
-  const alerts = useMemo(() => residentAlerts(u, mine, base), [u, mine, base])
+  // Las alertas son para el equipo de enseñanza; el residente ve solo su progreso
+  const alerts = useMemo(() => (isProfView ? residentAlerts(u, mine, base) : []), [isProfView, u, mine, base])
 
-  const smooth = rolling(inRange.map((c) => c.evaluation.supervision), 8)
+  const smooth = rolling(inRange.map((c) => caseSupervision(c.evaluation) ?? 0), 8)
   const points = inRange.map((c, i) => {
     const [lo, hi] = expectedBand(c.grade, monthsIntoGradeAt(c.date))
-    return { t: parseDate(c.date).getTime(), date: c.date, y: c.evaluation.supervision, smooth: smooth[i], lo, hi }
+    return { t: parseDate(c.date).getTime(), date: c.date, y: caseSupervision(c.evaluation) ?? 0, smooth: smooth[i], lo, hi }
   })
-  const sup = avg(inRange.map((c) => c.evaluation.supervision))
+  const sup = avg(inRange.map((c) => caseSupervision(c.evaluation)))
   const ent = avg(inRange.map((c) => c.evaluation.entrustment))
   const jc = avg(inRange.map((c) => juicio(c.evaluation)))
   const last30 = evals.slice(-30)
-  const dist = [1, 2, 3, 4, 5].map((v) => ({ label: SUPERVISION[v - 1].short, value: last30.filter((c) => c.evaluation.supervision === v).length, color: ORDINAL_BLUE[v - 1] }))
+  const dist = [1, 2, 3, 4, 5].map((v) => ({
+    label: SUPERVISION[v - 1].short,
+    value: last30.flatMap((c) => Object.values(c.evaluation.supervision)).filter((x) => x === v).length,
+    color: ORDINAL_BLUE[v - 1],
+  }))
   const domains = antsDomains(evals.slice(-20).map((c) => c.evaluation))
   const band = u.grade ? expectedBand(u.grade, monthsIntoGrade(u)) : null
   const recentImprove = evals.slice(-5).reverse()
 
   return (
     <>
-      <TopBar title={rid ? u.short : 'Mi progreso'} sub={`Residente ${u.grade} · ${mine.length} casos`} back={!!rid} right={rid ? <Avatar name={u.name} /> : undefined} />
+      <TopBar
+        title={rid ? u.short : 'Mi progreso'}
+        sub={`Residente ${u.grade} · ${mine.length} casos`}
+        back={!!rid}
+        fallback="/a/residentes"
+        right={rid ? <Avatar name={u.name} /> : undefined}
+      />
       <div className="screen">
         {alerts.length > 0 && (
           <div className="stack" style={{ marginBottom: 6 }}>
@@ -76,16 +100,18 @@ export default function Progress() {
               Esperado para el grado
             </span>
           </div>
-          <div className="tiny muted mt8">1 = "tuve que hacerlo yo" · 5 = "independiente y seguro". Toca la gráfica para ver cada punto.</div>
+          <div className="tiny muted mt8">
+            El O-SCORE se califica por procedimiento; aquí se grafica el promedio de cada caso. 1 = "tuve que hacerlo yo" · 5 = "independiente y seguro".
+          </div>
         </div>
 
         <div className="grid3 mt12">
-          <Kpi label="Supervisión" value={sup?.toFixed(1) ?? '—'} hint={band ? `Esperado ${band[0].toFixed(1)}–${band[1].toFixed(1)}` : undefined} />
-          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint="prospectivo" />
-          <Kpi label="Juicio clínico" value={jc?.toFixed(1) ?? '—'} hint="Mini-CEX 1–5" />
+          <Kpi label="O-SCORE" value={sup?.toFixed(1) ?? '—'} hint={band ? `Esperado ${band[0].toFixed(1)}–${band[1].toFixed(1)}` : undefined} />
+          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint="por caso" />
+          <Kpi label="Mini-CEX" value={jc?.toFixed(1) ?? '—'} hint="juicio clínico 1–5" />
         </div>
 
-        <div className="h2">Distribución · últimos 30 casos</div>
+        <div className="h2">Distribución del O-SCORE · últimos 30 casos</div>
         <div className="card">
           <StackedBar parts={dist} />
         </div>
@@ -117,7 +143,8 @@ export default function Progress() {
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="bold">{p.def.short}</div>
                     <div className="tiny muted num">
-                      {p.cusum.n} registros · {Math.round(p.cusum.successRate * 100)}% éxito · {p.lastDate ? fmtRelative(p.lastDate).toLowerCase() : ''}
+                      {p.cusum.n} registros · {Math.round(p.cusum.successRate * 100)}% éxito
+                      {p.supervision !== null ? ` · O-SCORE ${p.supervision.toFixed(1)}` : ''}
                     </div>
                     <div style={{ marginTop: 5 }}>
                       <CusumBadge state={p.cusum.state} />

@@ -3,9 +3,9 @@
 // así las gráficas y la CUSUM se ven como se verían con datos reales.
 import type {
   AnesthesiaType,
+  Area,
+  Asa,
   CaseRecord,
-  Complexity,
-  CriticalEvent,
   Evaluation,
   Grade,
   HelpLevel,
@@ -14,10 +14,11 @@ import type {
   Score4,
   Score5,
   Shift,
+  User,
 } from '../types'
 import { addDays, daysBetween, toISODate } from '../lib/dates'
-import { ANTS_ITEMS, GLOBAL_ITEMS, MINICEX_ITEMS, PROF_ITEMS, ROOMS, SPECIALTIES } from './catalog'
-import { ATTENDINGS, RESIDENTS, residencyStart } from './users'
+import { ANTS_ITEMS, MINICEX_ITEMS } from './catalog'
+import { ATTENDINGS, PROFESORES, RESIDENTS, residencyStart } from './users'
 
 type Rng = () => number
 
@@ -60,42 +61,41 @@ interface Profile {
 }
 
 const PROFILES: Record<string, Profile> = {
-  prodriguez: { s0: 0.12, s1: 1, tau: 300, talent: 0.7, load: 1 },
-  dcruz: { s0: 0.08, s1: 0.75, tau: 380, talent: 1.2, load: 1 },
-  jsalinas: { s0: 0.1, s1: 0.8, tau: 400, talent: 1.1, load: 0.75 },
-  vmendoza: { s0: 0.12, s1: 0.95, tau: 380, talent: 0.8, load: 0.75 },
-  afuentes: { s0: 0.1, s1: 0.95, tau: 400, talent: 0.8, load: 0.55 },
-  rlara: { s0: 0.1, s1: 0.86, tau: 420, talent: 1, load: 0.55 },
+  '26104': { s0: 0.12, s1: 1, tau: 280, talent: 0.35, load: 1.1 }, // Pablo Rodríguez
+  '26118': { s0: 0.08, s1: 0.75, tau: 380, talent: 1.2, load: 1 }, // Daniela Cruz
+  '25073': { s0: 0.1, s1: 0.8, tau: 400, talent: 1.1, load: 0.75 }, // Jorge Salinas
+  '25089': { s0: 0.12, s1: 0.95, tau: 380, talent: 0.8, load: 0.75 }, // Valeria Mendoza
+  '24035': { s0: 0.1, s1: 0.95, tau: 400, talent: 0.8, load: 0.55 }, // Andrés Fuentes
+  '24042': { s0: 0.1, s1: 0.86, tau: 420, talent: 1, load: 0.55 }, // Regina Lara
 }
 
 /** Curva de aprendizaje por procedimiento: pFalla(k) = pEnd + (pStart − pEnd)·e^(−k/K) */
 const LEARN: Record<ProcedureType, { pStart: number; pEnd: number; K: number }> = {
-  iot: { pStart: 0.4, pEnd: 0.03, K: 12 },
+  laringoscopia: { pStart: 0.35, pEnd: 0.03, K: 10 },
   mascarilla: { pStart: 0.15, pEnd: 0.01, K: 5 },
   videolaringo: { pStart: 0.2, pEnd: 0.03, K: 5 },
   fibroscopio: { pStart: 0.5, pEnd: 0.1, K: 4 },
-  neuroaxial: { pStart: 0.35, pEnd: 0.03, K: 10 },
+  espinal: { pStart: 0.35, pEnd: 0.03, K: 10 },
   epidural: { pStart: 0.4, pEnd: 0.05, K: 8 },
+  mixto: { pStart: 0.45, pEnd: 0.06, K: 8 },
   arterial: { pStart: 0.35, pEnd: 0.06, K: 6 },
   cvc: { pStart: 0.4, pEnd: 0.05, K: 5 },
   periferico: { pStart: 0.35, pEnd: 0.06, K: 6 },
   otro: { pStart: 0.3, pEnd: 0.1, K: 6 },
 }
 
-const SPEC_WEIGHTS: [string, number][] = [
-  ['cg', 25], ['go', 18], ['orto', 15], ['uro', 8], ['neuro', 5], ['cct', 3],
-  ['ped', 7], ['orl', 5], ['oft', 4], ['plas', 4], ['vasc', 4], ['fuera', 2],
-]
+const BLOCK_LABELS = ['Interescalénico', 'Supraclavicular', 'Axilar', 'Femoral', 'Ciático poplíteo', 'TAP', 'Erector espinal']
 
 const INCIDENT_BY_PROC: Partial<Record<ProcedureType, string[]>> = {
-  iot: ['Desaturación < 90%', 'Intubación esofágica', 'Trauma dental / vía aérea'],
+  laringoscopia: ['Desaturación < 90%', 'Intubación esofágica', 'Trauma dental / vía aérea'],
   videolaringo: ['Desaturación < 90%', 'Trauma dental / vía aérea'],
   mascarilla: ['Desaturación < 90%'],
-  neuroaxial: ['Parestesia', 'Hipotensión significativa', 'Bloqueo incompleto'],
+  espinal: ['Parestesia', 'Hipotensión significativa', 'Bloqueo incompleto', 'Raquia masiva'],
   epidural: ['Punción dural', 'Punción vascular inadvertida', 'Bloqueo incompleto'],
+  mixto: ['Punción dural', 'Bloqueo incompleto', 'Hipotensión significativa'],
   arterial: ['Hematoma'],
   cvc: ['Punción vascular inadvertida', 'Hematoma', 'Neumotórax'],
-  periferico: ['Bloqueo incompleto', 'Parestesia'],
+  periferico: ['Bloqueo incompleto', 'Parestesia', 'Intoxicación por anestésicos locales'],
   fibroscopio: ['Desaturación < 90%'],
 }
 
@@ -109,22 +109,52 @@ const IMPROVE = {
   mid: ['Anticipar plan B/C de vía aérea', 'Ajustar dosis a comorbilidades', 'Reevaluar después de cada intervención', 'Optimizar analgesia multimodal', 'Priorizar mejor ante cambios del caso'],
   high: ['Profundizar en manejo de casos de alta complejidad', 'Delegar más y supervisar al residente menor', 'Presentar este caso en la sesión académica'],
 }
-const PLANS = ['Repetir la técnica con supervisión directa', 'Leer guía DAS de vía aérea difícil', 'Practicar en simulador esta semana', 'Revisar el caso juntos en la sesión del jueves', 'Traer el plan anestésico escrito al siguiente caso']
-const NOTES = ['Me costó la visualización de la glotis, Cormack III', 'Paciente con cuello corto, primer intento fallido', 'Me sentí más seguro que la vez pasada', 'Quiero repasar dosis de vasopresores', '']
+const COMMENTS = ['Buen caso para su grado.', 'Conviene repetir la técnica esta semana.', 'Se le notó más seguro que en casos previos.', '']
+const REFLECTIONS = {
+  low: [
+    'Me costó la visualización de la glotis, necesito repasar posición.',
+    'Tardé en preparar el equipo; la próxima lo dejo listo antes.',
+    'Me faltó seguridad al calcular las dosis.',
+    'Identifiqué tarde la hipotensión, me la señaló mi adscrito.',
+  ],
+  mid: [
+    'Logré el procedimiento con indicaciones; me falta fluidez.',
+    'Me sentí más seguro que la vez pasada, pero tardé de más.',
+    'Buen manejo del plan, aunque me costó anticipar el sangrado.',
+    'Mi punto débil sigue siendo la referencia anatómica.',
+  ],
+  high: [
+    'Manejé el caso completo sin ayuda; me sentí cómodo.',
+    'Buen control hemodinámico durante todo el caso.',
+    'Pude anticipar el evento y ajustar el plan a tiempo.',
+    'Apoyé al R1 durante el caso y salió bien.',
+  ],
+}
+const CRITICAL_NOTES = [
+  'Hipotensión sostenida posterior al bloqueo, requirió vasopresor en infusión.',
+  'Desaturación durante la inducción, se resolvió con ventilación a dos manos.',
+  'Sangrado mayor al esperado, se activó protocolo de transfusión.',
+  'Broncoespasmo intraoperatorio, se profundizó plano anestésico.',
+  'Cambio no previsto de técnica quirúrgica, se reconvirtió el plan anestésico.',
+]
+const RISK_NOTES = [
+  'Retraso en reconocer la desaturación; el adscrito tuvo que tomar la vía aérea.',
+  'Dosis calculada por arriba de lo indicado, se corrigió antes de administrarla.',
+  'No verificó el equipo de vía aérea antes de iniciar.',
+]
 
 function gradeAt(residencyStartDate: Date, date: Date): Grade {
   const years = Math.floor(daysBetween(toISODate(residencyStartDate), toISODate(date)) / 365.25)
   return (['R1', 'R2', 'R3'] as const)[clamp(years, 0, 2)]
 }
 
-let procSeq = 0
-const pid = () => `p${++procSeq}`
-
 interface Ctx {
   r: Rng
   prof: Profile
   skill: number
   counts: Partial<Record<ProcedureType, number>>
+  caseId: string
+  seq: { n: number }
   forceFail?: (t: ProcedureType) => boolean
 }
 
@@ -164,29 +194,41 @@ function makeProcedure(ctx: Ctx, type: ProcedureType): ProcedureRecord {
   const time = fail ? (chance(r, 0.6) ? '>10' : '5-10') : chance(r, 0.3 + skill * 0.5) ? '<5' : chance(r, 0.8) ? '5-10' : '>10'
   const pool = INCIDENT_BY_PROC[type] ?? []
   const incidents = pool.length && chance(r, fail ? 0.4 : 0.03) ? [pick(r, pool)] : []
-  return { id: pid(), type, firstOperator, success, attempts, time, help, safety: !chance(r, 0.03), incidents }
+  return {
+    id: `${ctx.caseId}-p${++ctx.seq.n}`,
+    type,
+    label: type === 'periferico' ? pick(r, BLOCK_LABELS) : undefined,
+    firstOperator,
+    success,
+    attempts,
+    time,
+    help,
+    incidents,
+  }
 }
 
-function proceduresFor(ctx: Ctx, anesthesia: AnesthesiaType, complexity: Complexity, surgery: string, vad: boolean, allowCvc: boolean): ProcedureRecord[] {
+function proceduresFor(ctx: Ctx, anesthesia: AnesthesiaType, asa: Asa, vad: boolean, allowCvc: boolean): ProcedureRecord[] {
   const { r } = ctx
   const list: ProcedureType[] = []
+  const add = (t: ProcedureType) => {
+    if (!list.includes(t)) list.push(t) // nunca se repite un procedimiento en el mismo caso
+  }
   const airway = () => {
-    if (vad && chance(r, 0.25)) list.push('fibroscopio')
-    else list.push(chance(r, 0.12) ? 'videolaringo' : 'iot')
-    if (chance(r, 0.3)) list.unshift('mascarilla')
+    if (vad && chance(r, 0.25)) add('fibroscopio')
+    else add(chance(r, 0.12) ? 'videolaringo' : 'laringoscopia')
+    if (chance(r, 0.3)) add('mascarilla')
   }
   if (anesthesia === 'general') {
     airway()
-    if (complexity === 'alta' && chance(r, 0.55)) list.push('arterial')
-    if (complexity !== 'baja' && allowCvc && chance(r, complexity === 'alta' ? 0.35 : 0.06)) list.push('cvc')
+    if (asa >= 3 && chance(r, 0.4)) add('arterial')
+    if (asa >= 3 && allowCvc && chance(r, 0.22)) add('cvc')
   } else if (anesthesia === 'regional') {
-    if (surgery === 'Cesárea' || chance(r, 0.6)) list.push('neuroaxial')
-    else if (chance(r, 0.5)) list.push('epidural')
-    else list.push('periferico')
+    add(weighted(r, [['espinal', 55], ['epidural', 22], ['mixto', 12], ['periferico', 11]]))
+    if (chance(r, 0.12)) add('periferico')
   } else if (anesthesia === 'combinada') {
-    list.push(chance(r, 0.6) ? 'epidural' : 'periferico')
+    add(weighted(r, [['epidural', 45], ['mixto', 30], ['periferico', 25]]))
     airway()
-  } else if (chance(r, 0.4)) list.push('mascarilla')
+  } else if (chance(r, 0.4)) add('mascarilla')
   return list.map((t) => makeProcedure(ctx, t))
 }
 
@@ -195,40 +237,39 @@ const score5 = (r: Rng, skill: number, bias = 0, noObs = 0): Score5 =>
 const score4 = (r: Rng, skill: number, noObs = 0): Score4 =>
   chance(r, noObs) ? null : (clamp(Math.round(1 + 3 * skill + gauss(r) * 0.5), 1, 4) as Score4)
 
-function makeEvaluation(r: Rng, c: CaseRecord, skill: number, complexityPenalty: number, extra: { followUp?: Evaluation['followUp'] }): Evaluation {
-  const att = ATTENDINGS.find((a) => a.id === c.attendingId)!
-  const full = !!att.teachingTeam && chance(r, 0.3)
-  const sup = clamp(Math.round(1 + 4 * skill - complexityPenalty + gauss(r) * 0.45), 1, 5) as Evaluation['supervision']
-  const ent = clamp(Math.round(sup + gauss(r) * 0.5 - 0.15), 1, 5) as Evaluation['entrustment']
-  const level = sup <= 2 ? 'low' : sup >= 4 ? 'high' : 'mid'
+function makeEvaluation(r: Rng, c: CaseRecord, evaluator: User, skill: number, penalty: number, forceReview: boolean): Evaluation {
+  // O-SCORE por procedimiento
+  const supervision: Evaluation['supervision'] = {}
+  let sum = 0
+  c.procedures.forEach((p) => {
+    const hit = (p.success ? 0 : 1.2) + (p.attempts > 2 ? 0.6 : 0) + (p.help >= 3 ? 0.8 : 0)
+    const v = clamp(Math.round(1 + 4 * skill - penalty - hit + gauss(r) * 0.4), 1, 5) as 1 | 2 | 3 | 4 | 5
+    supervision[p.id] = v
+    sum += v
+  })
+  const mean = c.procedures.length ? sum / c.procedures.length : clamp(1 + 4 * skill - penalty, 1, 5)
+  const ent = clamp(Math.round(mean + gauss(r) * 0.5 - 0.15), 1, 5) as Evaluation['entrustment']
+  const level = mean <= 2.2 ? 'low' : mean >= 3.8 ? 'high' : 'mid'
   const ants: Record<string, Score4> = {}
-  ANTS_ITEMS.filter((i) => full || i.short).forEach((i) => (ants[i.id] = score4(r, skill, 0.05)))
+  ANTS_ITEMS.forEach((i) => (ants[i.id] = score4(r, skill, 0.05)))
   const miniCex: Record<string, Score5> = {}
-  MINICEX_ITEMS.filter((i) => full || i.short).forEach((i) => (miniCex[i.id] = score5(r, skill, -complexityPenalty / 2, 0.04)))
-  const ev: Evaluation = {
-    version: full ? 'completa' : 'corta',
-    attendingId: c.attendingId,
+  MINICEX_ITEMS.forEach((i) => (miniCex[i.id] = score5(r, skill, -penalty / 2, 0.04)))
+  const risk = c.procedures.some((p) => p.incidents.length) && chance(r, 0.12)
+  return {
+    attendingId: evaluator.id,
     evaluatedAt: `${c.date}T${String(clamp(Number(c.startTime.slice(0, 2)) + 3, 0, 23)).padStart(2, '0')}:${c.startTime.slice(3)}:00`,
-    durationSec: full ? 240 + Math.round(r() * 200) : 70 + Math.round(r() * 90),
-    supervision: sup,
+    durationSec: 150 + Math.round(r() * 170),
+    supervision,
     entrustment: ent,
     ants,
     miniCex,
     best: pick(r, BEST[level]),
     improve: pick(r, IMPROVE[level]),
-    plan: chance(r, 0.35) ? pick(r, PLANS) : undefined,
-    countsForProgression: !chance(r, 0.04),
-    followUp: extra.followUp ?? (sup <= 1 && chance(r, 0.4) ? 'observacion' : 'no'),
-    patientRisk: c.procedures.some((p) => p.incidents.length) && chance(r, 0.3) ? 'potencial' : 'no',
-    proceduresConfirmed: true,
+    comments: chance(r, 0.35) ? pick(r, COMMENTS) || undefined : undefined,
+    needsProfessorReview: forceReview || risk || chance(r, 0.015),
+    patientRisk: risk,
+    patientRiskNote: risk ? pick(r, RISK_NOTES) : undefined,
   }
-  if (full) {
-    ev.global = {}
-    GLOBAL_ITEMS.forEach((i) => (ev.global![i.id] = score5(r, skill, -complexityPenalty / 2, 0.03)))
-    ev.professionalism = {}
-    PROF_ITEMS.forEach((i) => (ev.professionalism![i.id] = score5(r, Math.min(1, skill + 0.2))))
-  }
-  return ev
 }
 
 function buildSeed(): CaseRecord[] {
@@ -254,75 +295,72 @@ function buildSeed(): CaseRecord[] {
       for (let j = 0; j < nCases; j++) {
         const skill = prof.s0 + (prof.s1 - prof.s0) * (1 - Math.exp(-dayN / prof.tau))
         const grade = gradeAt(start, d)
-        // Daniela: racha reciente de problemas en neuroaxial (el "peor caso" del demo)
-        const danielaStreak = res.id === 'dcruz' && daysAgo <= 21
-        const specId = danielaStreak && chance(r, 0.7) ? 'go' : weighted(r, SPEC_WEIGHTS)
-        const spec = SPECIALTIES.find((s) => s.id === specId)!
-        const surgery = specId === 'go' && (danielaStreak || chance(r, 0.6)) ? 'Cesárea' : pick(r, spec.surgeries)
+        const caseId = `${res.id}-${idx++}`
+        // Daniela: racha reciente de problemas en bloqueo espinal (el "peor caso" del demo)
+        const danielaStreak = res.id === '26118' && daysAgo <= 21
+        const area: Area = danielaStreak && chance(r, 0.7) ? 'toco' : weighted(r, [['quirofano', 68], ['toco', 14], ['fuera', 18]])
         const anesthesia: AnesthesiaType =
-          surgery === 'Cesárea'
-            ? chance(r, 0.88) ? 'regional' : 'general'
-            : specId === 'orto'
-              ? weighted(r, [['regional', 45], ['combinada', 25], ['general', 30]])
-              : specId === 'uro'
-                ? weighted(r, [['regional', 50], ['general', 50]])
-                : specId === 'oft' || specId === 'fuera'
-                  ? weighted(r, [['sedacion', 70], ['general', 30]])
-                  : weighted(r, [['general', 85], ['combinada', specId === 'cg' ? 10 : 3], ['sedacion', 5]])
-        const cw: Record<Grade, [Complexity, number][]> = {
-          R1: [['baja', 50], ['media', 40], ['alta', 10]],
-          R2: [['baja', 30], ['media', 50], ['alta', 20]],
-          R3: [['baja', 20], ['media', 45], ['alta', 35]],
+          area === 'toco'
+            ? weighted(r, [['regional', 80], ['general', 20]])
+            : area === 'fuera'
+              ? weighted(r, [['sedacion', 70], ['general', 30]])
+              : weighted(r, [['general', 68], ['regional', 20], ['combinada', 12]])
+        const asaW: Record<Grade, [Asa, number][]> = {
+          R1: [[1, 26], [2, 44], [3, 22], [4, 6], [5, 1.5], [6, 0.5]],
+          R2: [[1, 18], [2, 40], [3, 28], [4, 10], [5, 3], [6, 1]],
+          R3: [[1, 12], [2, 33], [3, 33], [4, 15], [5, 5], [6, 2]],
         }
-        let complexity = weighted(r, cw[grade])
-        if ((specId === 'cct' || specId === 'neuro') && complexity === 'baja') complexity = 'media'
-        const shift: Shift = guardia ? (weekend ? 'guardia' : pick(r, ['guardia', 'postguardia'] as const)) : 'ordinaria'
+        const asa = weighted(r, asaW[grade])
+        const shift: Shift = guardia ? 'guardia' : 'ordinaria'
         const urgency = chance(r, shift === 'guardia' ? 0.7 : 0.15) ? 'urgente' : 'electivo'
-        const asaBase = complexity === 'baja' ? 1 : complexity === 'media' ? 2 : 3
-        const asa = clamp(asaBase + (chance(r, 0.45) ? 1 : 0), 1, 5) as CaseRecord['asa']
         const comorbidities: string[] = []
-        if (surgery === 'Cesárea') comorbidities.push('Embarazo')
+        if (area === 'toco') comorbidities.push('Embarazo')
         if (chance(r, 0.2)) comorbidities.push('Obesidad')
-        const vad = chance(r, complexity === 'alta' ? 0.18 : 0.06)
+        const vad = chance(r, asa >= 4 ? 0.18 : 0.06)
         if (vad) comorbidities.push('Vía aérea difícil prevista')
-        if (asa >= 3 && chance(r, 0.4)) comorbidities.push(pick(r, ['Cardiopatía', 'Neumopatía']))
-        if (urgency === 'urgente' && specId === 'cg' && chance(r, 0.15)) comorbidities.push('Sepsis')
-        const criticalEvent = weighted<CriticalEvent>(r, [['no', complexity === 'alta' ? 76 : 90], ['leve', 7], ['moderado', 2.5], ['mayor', 0.5]])
-        const allowCvc = !(res.id === 'prodriguez' && (daysAgo < 41 || dayN < 50))
-        const ctx: Ctx = { r, prof, skill, counts, forceFail: danielaStreak ? (t) => t === 'neuroaxial' : undefined }
-        const procedures = proceduresFor(ctx, anesthesia, complexity, surgery, vad, allowCvc)
-        const attendingId = weighted(r, [['fgonzalez', 34], ['mortiz', 22], ['lherrera', 22], ['atrevino', 22]])
+        if (area !== 'toco' && chance(r, 0.08)) comorbidities.push('Paciente pediátrico')
+        const criticalEvent = chance(r, asa >= 4 ? 0.22 : 0.08)
+        const allowCvc = !(res.id === '26104' && (daysAgo < 41 || dayN < 50))
+        const seq = { n: 0 }
+        const ctx: Ctx = { r, prof, skill, counts, caseId, seq, forceFail: danielaStreak ? (t) => t === 'espinal' : undefined }
+        const procedures = proceduresFor(ctx, anesthesia, asa, vad, allowCvc)
+        // A veces no hubo adscrito presente: eso dispara alerta a todos los profesores
+        const noAttending = chance(r, 0.022)
+        const attendingId = noAttending ? null : weighted(r, ATTENDINGS.map((a) => [a.id, a.profesor ? 20 : 10] as [string, number]))
         const hh = shift === 'guardia' ? 16 + Math.floor(r() * 7) : j === 0 ? 7 + Math.floor(r() * 2) : 11 + Math.floor(r() * 3)
+        const level = skill <= 0.35 ? 'low' : skill >= 0.7 ? 'high' : 'mid'
         const c: CaseRecord = {
-          id: `${res.id}-${idx++}`,
+          id: caseId,
           residentId: res.id,
           attendingId,
-          createdBy: 'residente',
+          supervisionGap: noAttending ? (chance(r, 0.6) ? 'residente-mayor' : 'solo') : undefined,
           createdAt: `${dateISO}T${String(hh + 2).padStart(2, '0')}:00:00`,
           date: dateISO,
           startTime: `${String(hh).padStart(2, '0')}:${pick(r, ['00', '15', '30', '45'])}`,
-          room: surgery === 'Cesárea' ? 'Toco' : specId === 'fuera' ? 'Endosc.' : pick(r, ROOMS.slice(0, 8)),
+          area,
           shift,
           grade,
-          specialty: specId,
-          surgery,
           urgency,
           asa,
-          complexity,
           anesthesia,
           comorbidities,
-          usualForGrade: !(grade === 'R1' && complexity === 'alta') && !chance(r, 0.08),
+          usualForGrade: !chance(r, 0.1),
           criticalEvent,
+          criticalEventNote: criticalEvent ? pick(r, CRITICAL_NOTES) : undefined,
           procedures,
-          residentNote: chance(r, 0.15) ? pick(r, NOTES) || undefined : undefined,
+          residentReflection: pick(r, REFLECTIONS[level]),
+          residentNote: chance(r, 0.12) ? 'Quiero repasar este tema en la sesión.' : undefined,
           status: 'evaluado',
         }
-        const penalty = complexity === 'alta' ? 0.6 : complexity === 'media' ? 0.2 : 0
-        const neuroFail = danielaStreak && procedures.some((p) => p.type === 'neuroaxial' && (!p.success || p.help >= 3))
-        c.evaluation = makeEvaluation(r, c, skill, penalty, { followUp: neuroFail ? 'repetir' : undefined })
-        if (neuroFail) {
-          c.evaluation.improve = 'Revisar referencias anatómicas y posición antes de puncionar'
-          c.evaluation.plan = 'Repetir bloqueo neuroaxial con supervisión directa'
+        const penalty = asa >= 4 ? 0.6 : asa === 3 ? 0.25 : 0
+        const espinalFail = danielaStreak && procedures.some((p) => p.type === 'espinal' && (!p.success || p.help >= 3))
+        // Los casos sin adscrito los termina revisando un profesor; los muy recientes quedan pendientes
+        const evaluator = noAttending ? pick(r, PROFESORES) : ATTENDINGS.find((a) => a.id === attendingId)!
+        if (noAttending && daysAgo <= 10) {
+          c.status = 'pendiente'
+        } else {
+          c.evaluation = makeEvaluation(r, c, evaluator, skill, penalty, espinalFail)
+          if (espinalFail) c.evaluation.improve = 'Revisar referencias anatómicas y posición antes de puncionar'
         }
         out.push(c)
       }
@@ -337,76 +375,94 @@ function buildSeed(): CaseRecord[] {
 function pendingCases(today: Date): CaseRecord[] {
   const t = toISODate(today)
   const y = toISODate(addDays(today, -1))
-  const base = { createdBy: 'residente' as const, status: 'pendiente' as const, usualForGrade: true, criticalEvent: 'no' as const }
+  const base = { status: 'pendiente' as const, usualForGrade: true, criticalEvent: false }
   return [
     {
       ...base,
       id: 'pend-dcruz',
-      residentId: 'dcruz',
-      attendingId: 'fgonzalez',
+      residentId: '26118',
+      attendingId: '10482',
       createdAt: `${t}T09:40:00`,
       date: t,
       startTime: '08:00',
-      room: 'Toco',
+      area: 'toco',
       shift: 'ordinaria',
       grade: 'R1',
-      specialty: 'go',
-      surgery: 'Cesárea',
       urgency: 'urgente',
       asa: 2,
-      complexity: 'media',
       anesthesia: 'regional',
       comorbidities: ['Embarazo', 'Obesidad'],
       procedures: [
-        { id: 'pp1', type: 'neuroaxial', firstOperator: true, success: true, attempts: 3, time: '>10', help: 2, safety: true, incidents: ['Parestesia'] },
+        { id: 'pend-dcruz-p1', type: 'espinal', firstOperator: true, success: true, attempts: 3, time: '>10', help: 2, incidents: ['Parestesia'] },
       ],
-      residentNote: 'Me costó encontrar el espacio, la paciente con IMC 38. Al tercer intento con ayuda del Dr.',
+      residentReflection: 'Me costó encontrar el espacio; necesito repasar referencias anatómicas en paciente con obesidad.',
+      residentNote: 'Paciente con IMC 38. Al tercer intento lo logré con ayuda del Dr.',
     },
     {
       ...base,
       id: 'pend-jsalinas',
-      residentId: 'jsalinas',
-      attendingId: 'fgonzalez',
+      residentId: '25073',
+      attendingId: '10482',
       createdAt: `${y}T15:10:00`,
       date: y,
       startTime: '11:30',
-      room: 'Q4',
+      area: 'quirofano',
       shift: 'ordinaria',
       grade: 'R2',
-      specialty: 'orto',
-      surgery: 'Artroplastia de cadera',
       urgency: 'electivo',
       asa: 3,
-      complexity: 'alta',
       anesthesia: 'combinada',
-      comorbidities: ['Cardiopatía'],
+      comorbidities: [],
       procedures: [
-        { id: 'pp2', type: 'epidural', firstOperator: true, success: true, attempts: 1, time: '5-10', help: 0, safety: true, incidents: [] },
-        { id: 'pp3', type: 'arterial', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 1, safety: true, incidents: [] },
+        { id: 'pend-jsalinas-p1', type: 'epidural', firstOperator: true, success: true, attempts: 1, time: '5-10', help: 0, incidents: [] },
+        { id: 'pend-jsalinas-p2', type: 'arterial', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 1, incidents: [] },
       ],
+      residentReflection: 'La epidural salió al primer intento; la línea arterial me tomó dos punciones.',
     },
     {
       ...base,
       id: 'pend-rlara',
-      residentId: 'rlara',
-      attendingId: 'mortiz',
+      residentId: '24042',
+      attendingId: '10603',
       createdAt: `${t}T10:20:00`,
       date: t,
       startTime: '07:30',
-      room: 'Q2',
+      area: 'quirofano',
       shift: 'ordinaria',
       grade: 'R3',
-      specialty: 'neuro',
-      surgery: 'Craneotomía',
       urgency: 'electivo',
       asa: 3,
-      complexity: 'alta',
       anesthesia: 'general',
-      comorbidities: [],
+      comorbidities: ['Vía aérea difícil prevista'],
       procedures: [
-        { id: 'pp4', type: 'iot', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, safety: true, incidents: [] },
-        { id: 'pp5', type: 'arterial', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, safety: true, incidents: [] },
+        { id: 'pend-rlara-p1', type: 'videolaringo', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [] },
+        { id: 'pend-rlara-p2', type: 'arterial', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [] },
       ],
+      residentReflection: 'Preparé plan B y C de vía aérea; todo salió conforme al plan.',
+    },
+    {
+      // Caso sin adscrito: alerta para TODOS los profesores
+      ...base,
+      id: 'pend-vmendoza-sin',
+      residentId: '25089',
+      attendingId: null,
+      supervisionGap: 'residente-mayor',
+      createdAt: `${y}T23:10:00`,
+      date: y,
+      startTime: '22:40',
+      area: 'toco',
+      shift: 'guardia',
+      grade: 'R2',
+      urgency: 'urgente',
+      asa: 2,
+      anesthesia: 'regional',
+      comorbidities: ['Embarazo'],
+      criticalEvent: true,
+      criticalEventNote: 'Hipotensión sostenida tras el bloqueo; se manejó con efedrina en bolos.',
+      procedures: [
+        { id: 'pend-vmendoza-sin-p1', type: 'espinal', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 0, incidents: ['Hipotensión significativa'] },
+      ],
+      residentReflection: 'Cesárea urgente de madrugada; no había adscrito disponible y me apoyó el R3 de guardia.',
     },
   ]
 }

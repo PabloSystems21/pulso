@@ -1,32 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Check, Pencil, Timer } from 'lucide-react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Check, ShieldAlert, Timer } from 'lucide-react'
 import { useStore } from '../store'
-import type { Evaluation, FollowUp, PatientRisk, ProcedureRecord, Score4, Score5 } from '../types'
+import type { Evaluation, ProcedureRecord, Score4, Score5 } from '../types'
 import {
   ANESTHESIA_LABEL,
   ANTS_DOMAINS,
   ANTS_ITEMS,
+  AREA_LABEL,
   BEST_SUGGESTIONS,
   ENTRUSTMENT,
-  FOLLOWUP,
-  GLOBAL_ITEMS,
   IMPROVE_SUGGESTIONS,
   MINICEX_ITEMS,
-  PROF_ITEMS,
-  RISK,
   SCALE4_LABELS,
   SCALE5_LABELS,
   SHIFT_LABEL,
   SUPERVISION,
-  specialtyLabel,
   type Item,
 } from '../data/catalog'
 import { userById } from '../data/users'
 import { fmtDateLong, fmtDuration } from '../lib/dates'
-import { Avatar, ChoiceList, Chips, ScaleSeg, TopBar, YesNo } from '../components/ui'
+import { procLabel } from '../lib/stats'
+import { Avatar, ChoiceList, ScaleSeg, TopBar, YesNo } from '../components/ui'
 import { ProcLine } from '../components/case'
-import { ProcedureFlow } from '../components/ProcedureFlow'
 
 function LiveTimer({ since }: { since: number }) {
   const [, tick] = useState(0)
@@ -41,7 +37,19 @@ function LiveTimer({ since }: { since: number }) {
   )
 }
 
-function ItemBlock<T extends number | null>({ items, values, max, onChange, groups }: { items: Item[]; values: Record<string, T | undefined>; max: 4 | 5; onChange: (id: string, v: T) => void; groups?: { id: string; label: string; ids: string[] }[] }) {
+function ItemBlock<T extends number | null>({
+  items,
+  values,
+  max,
+  onChange,
+  groups,
+}: {
+  items: Item[]
+  values: Record<string, T | undefined>
+  max: 4 | 5
+  onChange: (id: string, v: T) => void
+  groups?: { id: string; label: string; ids: string[] }[]
+}) {
   const labels = max === 5 ? SCALE5_LABELS : SCALE4_LABELS
   const render = (list: Item[]) =>
     list.map((i) => (
@@ -59,9 +67,7 @@ function ItemBlock<T extends number | null>({ items, values, max, onChange, grou
     ))
   return (
     <div className="stack">
-      <div className="tiny muted" style={{ marginBottom: 2 }}>
-        {labels.map((l, i) => `${i + 1} ${l}`).join(' · ')} · N/O no observado
-      </div>
+      <div className="tiny muted">{labels.map((l, i) => `${i + 1} ${l}`).join(' · ')} · N/O no observado</div>
       {groups
         ? groups.map((g) => {
             const list = items.filter((i) => g.ids.includes(i.id))
@@ -92,118 +98,106 @@ function Suggest({ options, onPick }: { options: string[]; onPick: (s: string) =
   )
 }
 
+type StepKind = 'caso' | 'oscore' | 'entrust' | 'ants' | 'cex' | 'retro' | 'cierre'
+
 export default function Evaluate() {
   const { id } = useParams()
   const { user, cases, saveCase } = useStore()
   const nav = useNavigate()
-  const loc = useLocation()
   const c = cases.find((x) => x.id === id)
-  const startedAt = useRef((loc.state as { startedAt?: number } | null)?.startedAt ?? Date.now())
+  const startedAt = useRef(Date.now())
   const submitted = useRef(false)
-  const [version, setVersion] = useState<'corta' | 'completa'>('corta')
   const [step, setStep] = useState(0)
-  const [procs, setProcs] = useState<ProcedureRecord[]>(c?.procedures ?? [])
-  const [editProc, setEditProc] = useState<ProcedureRecord | null>(null)
-  const [supervision, setSupervision] = useState<Evaluation['supervision']>()
+  const [supervision, setSupervision] = useState<Record<string, 1 | 2 | 3 | 4 | 5 | undefined>>({})
   const [entrustment, setEntrustment] = useState<Evaluation['entrustment']>()
   const [ants, setAnts] = useState<Record<string, Score4 | undefined>>({})
   const [miniCex, setMiniCex] = useState<Record<string, Score5 | undefined>>({})
-  const [global, setGlobal] = useState<Record<string, Score5 | undefined>>({})
-  const [prof, setProf] = useState<Record<string, Score5 | undefined>>({})
   const [best, setBest] = useState('')
   const [improve, setImprove] = useState('')
-  const [plan, setPlan] = useState('')
-  const [counts, setCounts] = useState<boolean | undefined>(true)
-  const [followUp, setFollowUp] = useState<FollowUp>('no')
-  const [risk, setRisk] = useState<PatientRisk>('no')
+  const [comments, setComments] = useState('')
+  const [needsReview, setNeedsReview] = useState<boolean | undefined>(false)
+  const [risk, setRisk] = useState<boolean | undefined>(false)
+  const [riskNote, setRiskNote] = useState('')
 
-  const full = version === 'completa'
-  const antsItems = ANTS_ITEMS.filter((i) => full || i.short)
-  const cexItems = MINICEX_ITEMS.filter((i) => full || i.short)
-  const steps = useMemo(
-    () => ['Caso', 'Supervisión', 'Prospectiva', ...(full ? ['Desempeño global'] : []), 'Juicio clínico', 'ANTS', ...(full ? ['Profesionalismo'] : []), 'Retroalimentación', 'Cierre'],
-    [full],
-  )
+  const steps = useMemo(() => {
+    const procs: ProcedureRecord[] = c?.procedures ?? []
+    return [
+      { key: 'caso', name: 'Caso', kind: 'caso' as StepKind, proc: undefined as ProcedureRecord | undefined },
+      ...procs.map((p) => ({ key: `o-${p.id}`, name: 'O-SCORE', kind: 'oscore' as StepKind, proc: p })),
+      { key: 'entrust', name: 'Entrustment', kind: 'entrust' as StepKind, proc: undefined },
+      { key: 'ants', name: 'ANTS', kind: 'ants' as StepKind, proc: undefined },
+      { key: 'cex', name: 'Mini-CEX', kind: 'cex' as StepKind, proc: undefined },
+      { key: 'retro', name: 'Retroalimentación', kind: 'retro' as StepKind, proc: undefined },
+      { key: 'cierre', name: 'Cierre', kind: 'cierre' as StepKind, proc: undefined },
+    ]
+  }, [c])
 
   if (!c) return null
-  // Si ya estaba evaluado al abrir, mostrar el detalle; si lo acabamos de enviar, dejar que navegue a "listo"
+  // Solo evalúa el adscrito asignado; los casos sin adscrito los toma cualquier profesor
+  if (c.attendingId && c.attendingId !== user!.id && !user!.profesor) return <Navigate to="/a" replace />
   if (c.status === 'evaluado') return submitted.current ? null : <Navigate to={`/a/caso/${c.id}`} replace />
-  const resident = userById(c.residentId)
-  const name = steps[step]
-  const allAnswered = (items: Item[], v: Record<string, unknown>) => items.every((i) => v[i.id] !== undefined)
 
-  const valid: Record<string, boolean> = {
-    Caso: true,
-    Supervisión: !!supervision,
-    Prospectiva: !!entrustment,
-    'Desempeño global': allAnswered(GLOBAL_ITEMS, global),
-    'Juicio clínico': allAnswered(cexItems, miniCex),
-    ANTS: allAnswered(antsItems, ants),
-    Profesionalismo: allAnswered(PROF_ITEMS, prof),
-    Retroalimentación: best.trim().length > 2 && improve.trim().length > 2,
-    Cierre: counts !== undefined,
-  }
+  const resident = userById(c.residentId)
+  const cur = steps[step]
+  const allAnswered = (items: Item[], v: Record<string, unknown>) => items.every((i) => v[i.id] !== undefined)
+  const valid =
+    cur.kind === 'caso'
+      ? true
+      : cur.kind === 'oscore'
+        ? !!supervision[cur.proc!.id]
+        : cur.kind === 'entrust'
+          ? !!entrustment
+          : cur.kind === 'ants'
+            ? allAnswered(ANTS_ITEMS, ants)
+            : cur.kind === 'cex'
+              ? allAnswered(MINICEX_ITEMS, miniCex)
+              : cur.kind === 'retro'
+                ? best.trim().length > 2 && improve.trim().length > 2
+                : needsReview !== undefined && risk !== undefined && (!risk || riskNote.trim().length > 3)
 
   const advance = () => setStep((s) => Math.min(s + 1, steps.length - 1))
   const autoNext = () => setTimeout(advance, 220)
 
   const submit = () => {
-    const pickVals = <T,>(items: Item[], v: Record<string, T | undefined>) => Object.fromEntries(items.map((i) => [i.id, v[i.id] ?? null])) as Record<string, T>
+    const pick = <T,>(items: Item[], v: Record<string, T | undefined>) => Object.fromEntries(items.map((i) => [i.id, v[i.id] ?? null])) as Record<string, T>
     const durationSec = Math.round((Date.now() - startedAt.current) / 1000)
     const evaluation: Evaluation = {
-      version,
       attendingId: user!.id,
       evaluatedAt: new Date().toISOString(),
       durationSec,
-      supervision: supervision!,
+      supervision: Object.fromEntries(c.procedures.map((p) => [p.id, supervision[p.id]!])),
       entrustment: entrustment!,
-      ants: pickVals<Score4>(antsItems, ants),
-      miniCex: pickVals<Score5>(cexItems, miniCex),
-      global: full ? pickVals<Score5>(GLOBAL_ITEMS, global) : undefined,
-      professionalism: full ? pickVals<Score5>(PROF_ITEMS, prof) : undefined,
+      ants: pick<Score4>(ANTS_ITEMS, ants),
+      miniCex: pick<Score5>(MINICEX_ITEMS, miniCex),
       best: best.trim(),
       improve: improve.trim(),
-      plan: plan.trim() || undefined,
-      countsForProgression: counts!,
-      followUp,
-      patientRisk: risk,
-      proceduresConfirmed: true,
+      comments: comments.trim() || undefined,
+      needsProfessorReview: !!needsReview || !!risk,
+      patientRisk: !!risk,
+      patientRiskNote: risk ? riskNote.trim() : undefined,
     }
     submitted.current = true
-    saveCase({ ...c, procedures: procs, attendingId: user!.id, status: 'evaluado', evaluation })
+    saveCase({ ...c, status: 'evaluado', evaluation })
     nav(`/a/listo/${c.id}`, { replace: true, state: { secs: durationSec } })
-  }
-
-  if (editProc) {
-    return (
-      <>
-        <TopBar title="Corregir procedimiento" sub={resident.short} />
-        <div className="screen no-tabs">
-          <ProcedureFlow
-            initial={editProc}
-            perspective="adscrito"
-            onCancel={() => setEditProc(null)}
-            onDone={(p) => {
-              setProcs(procs.map((x) => (x.id === p.id ? p : x)))
-              setEditProc(null)
-            }}
-          />
-        </div>
-      </>
-    )
   }
 
   return (
     <>
-      <TopBar title={`Evaluar a ${resident.name.split(' ')[0]}`} sub={`${name} · ${step + 1}/${steps.length}`} back={step === 0} right={<LiveTimer since={startedAt.current} />} />
+      <TopBar
+        title={`Evaluar a ${resident.name.split(' ')[0]}`}
+        sub={`${cur.name} · ${step + 1}/${steps.length}`}
+        back={step === 0}
+        fallback="/a"
+        right={<LiveTimer since={startedAt.current} />}
+      />
       <div className="steps">
         {steps.map((s, i) => (
-          <span key={s} className={i < step ? 'done' : i === step ? 'cur' : ''} />
+          <span key={s.key} className={i < step ? 'done' : i === step ? 'cur' : ''} />
         ))}
       </div>
 
-      <div className="screen no-tabs" key={name}>
-        {name === 'Caso' && (
+      <div className="screen no-tabs" key={cur.key}>
+        {cur.kind === 'caso' && (
           <div className="question">
             <div className="card">
               <div className="row">
@@ -213,80 +207,87 @@ export default function Evaluate() {
                     {resident.short}
                   </div>
                   <div className="small muted">
-                    {c.grade} · caso de {fmtDateLong(c.date)}
+                    {c.grade} · {fmtDateLong(c.date)}
                   </div>
                 </div>
               </div>
-              <div className="mt16" style={{ fontSize: 18, fontWeight: 800 }}>
-                {c.surgery}
-              </div>
-              <div className="row wrap mt8" style={{ gap: 6 }}>
-                <span className="badge">{specialtyLabel(c.specialty)}</span>
+              <div className="row wrap mt16" style={{ gap: 6 }}>
+                <span className="badge">{AREA_LABEL[c.area]}</span>
                 <span className="badge">
                   ASA {c.asa}
                   {c.urgency === 'urgente' ? 'E' : ''}
                 </span>
                 <span className="badge">{ANESTHESIA_LABEL[c.anesthesia]}</span>
-                <span className={`badge ${c.complexity === 'alta' ? 'warn' : ''}`}>Complejidad {c.complexity}</span>
                 <span className="badge">
-                  {c.room} · {c.startTime} · {SHIFT_LABEL[c.shift]}
+                  {c.startTime} · {SHIFT_LABEL[c.shift]}
                 </span>
                 {c.comorbidities.map((m) => (
                   <span key={m} className="badge brand">
                     {m}
                   </span>
                 ))}
-                {c.criticalEvent !== 'no' && <span className="badge crit">Evento crítico {c.criticalEvent}</span>}
                 {!c.usualForGrade && <span className="badge warn">No habitual para su grado</span>}
               </div>
-              {c.residentNote && (
-                <div className="feedback-quote mt12">
-                  <div className="tiny muted bold">NOTA DEL RESIDENTE</div>
-                  <div className="small">"{c.residentNote}"</div>
+              {c.criticalEvent && (
+                <div className="card flat mt12" style={{ background: 'var(--warn-soft)', border: 0 }}>
+                  <div className="tiny bold" style={{ color: 'var(--warn-ink)' }}>
+                    EVENTO CRÍTICO
+                  </div>
+                  <div className="small">{c.criticalEventNote}</div>
+                </div>
+              )}
+              {!c.attendingId && (
+                <div className="card flat mt12" style={{ background: 'var(--crit-soft)', border: 0 }}>
+                  <div className="row">
+                    <ShieldAlert size={18} color="var(--crit)" />
+                    <div className="small bold" style={{ color: '#a32424' }}>
+                      Caso sin adscrito · {c.supervisionGap === 'residente-mayor' ? 'con residente de mayor jerarquía' : 'el residente estuvo solo'}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
 
-            {procs.length > 0 && (
+            <div className="h2">Autoevaluación del residente</div>
+            <div className="card" style={{ borderLeft: '4px solid var(--accent)' }}>
+              <div className="tiny muted bold">FORTALEZA, DIFICULTAD U OPORTUNIDAD</div>
+              <div className="small">"{c.residentReflection}"</div>
+              {c.residentNote && (
+                <>
+                  <div className="tiny muted bold mt12">NOTA PARA TI</div>
+                  <div className="small">"{c.residentNote}"</div>
+                </>
+              )}
+            </div>
+
+            {c.procedures.length > 0 && (
               <>
                 <div className="h2">Procedimientos reportados</div>
                 <div className="stack">
-                  {procs.map((p) => (
+                  {c.procedures.map((p) => (
                     <div key={p.id} className="card tight">
                       <ProcLine p={p} />
-                      <div className="row mt8" style={{ justifyContent: 'flex-end' }}>
-                        <button className="btn sm" onClick={() => setEditProc(p)}>
-                          <Pencil size={14} /> Corregir
-                        </button>
-                      </div>
+                      {p.notes && <div className="small ink2 mt8">{p.notes}</div>}
                     </div>
                   ))}
                 </div>
-                <div className="tiny muted mt8">Al enviar la evaluación confirmas estos datos; alimentan la CUSUM del residente.</div>
+                <div className="tiny muted mt8">Vas a calificar cada procedimiento por separado ({c.procedures.length} en total), y el caso completo al final.</div>
               </>
             )}
-
-            <div className="h2">Versión de la evaluación</div>
-            <div className="big-choices">
-              <button className={`big-choice${!full ? ' on' : ''}`} style={{ flexDirection: 'column', gap: 0, height: 74 }} onClick={() => setVersion('corta')}>
-                Corta<span className="tiny muted" style={{ fontWeight: 600 }}>≈ 2 min · diario</span>
-              </button>
-              <button className={`big-choice${full ? ' on' : ''}`} style={{ flexDirection: 'column', gap: 0, height: 74 }} onClick={() => setVersion('completa')}>
-                Completa<span className="tiny muted" style={{ fontWeight: 600 }}>≈ 6 min · docente</span>
-              </button>
-            </div>
-            {c.complexity === 'alta' && !full && <div className="small mt8" style={{ color: 'var(--warn-ink)' }}>Sugerencia: caso de complejidad alta → considera la versión completa.</div>}
           </div>
         )}
 
-        {name === 'Supervisión' && (
+        {cur.kind === 'oscore' && (
           <div className="question">
-            <div className="q-title">Durante este caso, el nivel de apoyo que requirió fue…</div>
+            <div className="q-hint" style={{ margin: '0 2px 4px' }}>
+              Durante {procLabel(cur.proc!).toLowerCase()}
+            </div>
+            <div className="q-title">El nivel de apoyo que requirió fue…</div>
             <ChoiceList
               numbered
-              value={supervision}
+              value={supervision[cur.proc!.id]}
               onPick={(v) => {
-                setSupervision(v)
+                setSupervision((x) => ({ ...x, [cur.proc!.id]: v }))
                 autoNext()
               }}
               options={SUPERVISION.map((s) => ({ v: s.v, title: s.text }))}
@@ -294,9 +295,12 @@ export default function Evaluate() {
           </div>
         )}
 
-        {name === 'Prospectiva' && (
+        {cur.kind === 'entrust' && (
           <div className="question">
-            <div className="q-title">Para un caso similar, {resident.name.split(' ')[0]} está listo para…</div>
+            <div className="q-hint" style={{ margin: '0 2px 4px' }}>
+              Viendo el caso completo
+            </div>
+            <div className="q-title">{resident.name.split(' ')[0]} está listo para…</div>
             <ChoiceList
               numbered
               value={entrustment}
@@ -309,25 +313,12 @@ export default function Evaluate() {
           </div>
         )}
 
-        {name === 'Desempeño global' && (
-          <div className="question">
-            <div className="q-title">Desempeño global del caso</div>
-            <ItemBlock items={GLOBAL_ITEMS} values={global} max={5} onChange={(k, v) => setGlobal((x) => ({ ...x, [k]: v }))} />
-          </div>
-        )}
-
-        {name === 'Juicio clínico' && (
-          <div className="question">
-            <div className="q-title">{full ? 'Mini-CEX perioperatorio' : 'Juicio clínico aplicado'}</div>
-            <ItemBlock items={cexItems} values={miniCex} max={5} onChange={(k, v) => setMiniCex((x) => ({ ...x, [k]: v }))} />
-          </div>
-        )}
-
-        {name === 'ANTS' && (
+        {cur.kind === 'ants' && (
           <div className="question">
             <div className="q-title">Habilidades no técnicas (ANTS)</div>
+            <div className="q-hint">Se evalúan por caso, no por procedimiento.</div>
             <ItemBlock
-              items={antsItems}
+              items={ANTS_ITEMS}
               values={ants}
               max={4}
               onChange={(k, v) => setAnts((x) => ({ ...x, [k]: v }))}
@@ -336,14 +327,15 @@ export default function Evaluate() {
           </div>
         )}
 
-        {name === 'Profesionalismo' && (
+        {cur.kind === 'cex' && (
           <div className="question">
-            <div className="q-title">Profesionalismo y competencias transversales</div>
-            <ItemBlock items={PROF_ITEMS} values={prof} max={5} onChange={(k, v) => setProf((x) => ({ ...x, [k]: v }))} />
+            <div className="q-title">Mini-CEX perioperatorio</div>
+            <div className="q-hint">Saberes clínicos y juicio aplicado al caso.</div>
+            <ItemBlock items={MINICEX_ITEMS} values={miniCex} max={5} onChange={(k, v) => setMiniCex((x) => ({ ...x, [k]: v }))} />
           </div>
         )}
 
-        {name === 'Retroalimentación' && (
+        {cur.kind === 'retro' && (
           <div className="question">
             <div className="q-title">Retroalimentación</div>
             <div className="q-hint">Toca una sugerencia o escribe con tus palabras.</div>
@@ -357,20 +349,28 @@ export default function Evaluate() {
             </div>
             <textarea className="textarea" value={improve} onChange={(e) => setImprove(e.target.value)} placeholder="Ej. Anticipar plan B de vía aérea…" />
             <Suggest options={IMPROVE_SUGGESTIONS} onPick={(s) => setImprove((b) => (b.trim() ? `${b.trim()}. ${s}` : s))} />
-            <div className="field-label">Plan concreto para el siguiente caso (opcional)</div>
-            <textarea className="textarea" style={{ minHeight: 64 }} value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="Ej. Practicar en simulador esta semana" />
+            <div className="field-label">Comentarios adicionales (opcional)</div>
+            <textarea className="textarea" style={{ minHeight: 64 }} value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Contexto del caso, algo extra que quieras dejar asentado…" />
           </div>
         )}
 
-        {name === 'Cierre' && (
+        {cur.kind === 'cierre' && (
           <div className="question">
             <div className="q-title">Cierre</div>
-            <div className="field-label">¿Este caso cuenta para la progresión del residente?</div>
-            <YesNo neutral value={counts} onPick={setCounts} />
-            <div className="field-label">¿Requiere seguimiento?</div>
-            <ChoiceList value={followUp} onPick={setFollowUp} options={FOLLOWUP.map((f) => ({ v: f.id, title: f.label }))} />
+            <div className="field-label">¿Este caso amerita revisión de un profesor?</div>
+            <YesNo neutral value={needsReview} onPick={setNeedsReview} />
+            {needsReview && <div className="tiny muted mt8">El caso quedará marcado hasta que un profesor lo valide.</div>}
             <div className="field-label">¿Hubo riesgo para el paciente atribuible al desempeño del residente?</div>
-            <Chips options={RISK} value={risk} onChange={setRisk} />
+            <YesNo neutral value={risk} onPick={setRisk} />
+            {risk && (
+              <>
+                <div className="field-label">
+                  ¿Qué pasó? <span style={{ color: 'var(--crit)' }}>*</span>
+                </div>
+                <textarea className="textarea" autoFocus value={riskNote} onChange={(e) => setRiskNote(e.target.value)} placeholder="Describe el riesgo y cómo se resolvió" />
+                <div className="tiny muted mt8">Los casos con riesgo se notifican a todos los profesores.</div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -381,10 +381,10 @@ export default function Evaluate() {
             Atrás
           </button>
         )}
-        <button className="btn primary grow" disabled={!valid[name]} onClick={name === 'Cierre' ? submit : advance}>
-          {name === 'Caso' ? (
+        <button className="btn primary grow" disabled={!valid} onClick={cur.kind === 'cierre' ? submit : advance}>
+          {cur.kind === 'caso' ? (
             'Comenzar evaluación'
-          ) : name === 'Cierre' ? (
+          ) : cur.kind === 'cierre' ? (
             <>
               <Check size={18} /> Enviar evaluación
             </>

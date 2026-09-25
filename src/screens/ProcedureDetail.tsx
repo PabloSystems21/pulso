@@ -24,7 +24,7 @@ export default function ProcedureDetail() {
     () => mine.flatMap((c) => c.procedures.filter((p) => p.type === def.id && p.firstOperator).map((p) => ({ c, p }))),
     [mine, def.id],
   )
-  if (!s) return <TopBar title={def.label} back />
+  if (!s) return <TopBar title={def.label} back fallback={base} />
   const r = s.cusum
   const helpDist = HELP.map((h) => ({ label: h.label, value: records.filter((x) => x.p.help === h.id).length, color: ORDINAL_BLUE[h.id] }))
   const recent = records.slice(-10).reverse()
@@ -40,7 +40,7 @@ export default function ProcedureDetail() {
 
   return (
     <>
-      <TopBar title={def.label} sub={rid ? u.short : 'Curva de aprendizaje'} back />
+      <TopBar title={def.label} sub={rid ? u.short : 'Curva de aprendizaje'} back fallback={base} />
       <div className="screen">
         <div className="card">
           <CusumBadge state={r.state} />
@@ -53,8 +53,12 @@ export default function ProcedureDetail() {
         <div className="grid2 mt12">
           <Kpi label="N acumulado" value={r.n} hint={s.exposure > r.n ? `+${s.exposure - r.n} participaciones parciales` : 'como primer operador'} />
           <Kpi label="Tasa de éxito" value={`${Math.round(r.successRate * 100)}%`} hint={`Aceptable ≥ ${Math.round((1 - def.p0) * 100)}%`} />
-          <Kpi label="Último cruce" value={r.lastCross ? `#${r.lastCross.n}` : '—'} hint={r.lastCross ? `Línea ${r.lastCross.kind} · ${fmtDate(r.lastCross.date)}` : 'Sin cruces aún'} />
-          <Kpi label="Última exposición" value={s.daysSince !== undefined ? `${s.daysSince} d` : '—'} hint={s.daysSince !== undefined && s.daysSince > 40 ? 'Periodo sin exposición' : 'días atrás'} />
+          <Kpi label="O-SCORE promedio" value={s.supervision?.toFixed(1) ?? '—'} hint="en este procedimiento" />
+          <Kpi
+            label="Última exposición"
+            value={s.daysSince !== undefined ? `${s.daysSince} d` : '—'}
+            hint={s.daysSince !== undefined && s.daysSince > 40 ? 'Periodo sin exposición' : 'días atrás'}
+          />
         </div>
 
         <div className="h2">CUSUM</div>
@@ -98,7 +102,8 @@ export default function ProcedureDetail() {
                   {attemptText(p)} · {HELP[p.help].label.toLowerCase()}
                 </div>
                 <div className="tiny muted">
-                  {fmtDate(c.date)} · {c.surgery}
+                  {fmtDate(c.date)}
+                  {c.evaluation?.supervision[p.id] ? ` · O-SCORE ${c.evaluation.supervision[p.id]}` : ' · sin evaluar'}
                 </div>
               </div>
               <ChevronRight size={16} className="muted" />

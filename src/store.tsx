@@ -1,33 +1,46 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { CaseRecord, User } from './types'
 import { getSeed } from './data/seed'
-import { userById } from './data/users'
+import { findUser, initialPassword, userById } from './data/users'
 import { byDate } from './lib/stats'
 
 // Sin backend: el historial se genera en memoria y solo lo que el usuario crea/cambia
 // se guarda en localStorage. "Reiniciar demo" lo borra.
-const DATA_KEY = 'pulso:data:v1'
-const USER_KEY = 'pulso:user:v1'
+const DATA_KEY = 'pulso:data:v2'
+const USER_KEY = 'pulso:user:v2'
+
+/** Cuenta de acceso: usuario = código de empleado / matrícula */
+interface Account {
+  password: string
+  changed: boolean
+}
 
 interface Persisted {
   created: CaseRecord[]
   overrides: Record<string, CaseRecord>
+  accounts: Record<string, Account>
 }
 
 function load(): Persisted {
   try {
     const raw = localStorage.getItem(DATA_KEY)
-    if (raw) return JSON.parse(raw) as Persisted
+    if (raw) {
+      const p = JSON.parse(raw) as Persisted
+      return { created: p.created ?? [], overrides: p.overrides ?? {}, accounts: p.accounts ?? {} }
+    }
   } catch {
     /* almacenamiento no disponible */
   }
-  return { created: [], overrides: {} }
+  return { created: [], overrides: {}, accounts: {} }
 }
 
 interface Store {
   user: User | null
   cases: CaseRecord[]
-  login: (id: string) => void
+  /** Inicio de sesión con código y contraseña */
+  login: (code: string, password: string) => string | null
+  /** Atajo del demo: entra sin escribir la contraseña */
+  quickLogin: (id: string) => void
   logout: () => void
   /** Cambia de usuario y aterriza en una ruta (atajos del demo) */
   switchTo: (id: string, path: string) => void
@@ -35,16 +48,22 @@ interface Store {
   clearRedirect: () => void
   saveCase: (c: CaseRecord) => void
   reset: () => void
+  /** Estado de la cuenta (si ya cambió su contraseña genérica) */
+  accountOf: (id: string) => Account
+  changePassword: (id: string, password: string) => void
+  /** Un profesor restablece la contraseña genérica de alguien */
+  resetPassword: (id: string) => void
 }
 
 const Ctx = createContext<Store | null>(null)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<Persisted>(load)
+  const [redirectTo, setRedirectTo] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(() => {
-    // Link directo al demo: https://tu-sitio/?as=fgonzalez  (o ?as=prodriguez)
+    // Link directo al demo: https://tu-sitio/?as=10482
     const as = new URLSearchParams(window.location.search).get('as')
-    if (as && userById(as)) {
+    if (as && findUser(as)) {
       window.history.replaceState(null, '', window.location.pathname + window.location.hash)
       return as
     }
@@ -54,8 +73,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return null
     }
   })
-
-  const [redirectTo, setRedirectTo] = useState<string | null>(null)
 
   useEffect(() => {
     try {
@@ -87,11 +104,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const accountOf = useCallback(
+    (id: string): Account => data.accounts[id] ?? { password: initialPassword(userById(id)), changed: false },
+    [data.accounts],
+  )
+
+  const setAccount = useCallback((id: string, a: Account) => {
+    setData((d) => ({ ...d, accounts: { ...d.accounts, [id]: a } }))
+  }, [])
+
   const value = useMemo<Store>(
     () => ({
-      user: userId ? userById(userId) ?? null : null,
+      user: userId ? findUser(userId) ?? null : null,
       cases,
-      login: setUserId,
+      login: (code, password) => {
+        const u = findUser(code.trim())
+        if (!u) return 'Ese código no existe. Pídelo al profesor o al administrador.'
+        if (accountOf(u.id).password !== password) return 'Contraseña incorrecta.'
+        setUserId(u.id)
+        return null
+      },
+      quickLogin: setUserId,
       logout: () => setUserId(null),
       switchTo: (id, path) => {
         setUserId(id)
@@ -100,9 +133,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       redirectTo,
       clearRedirect: () => setRedirectTo(null),
       saveCase,
-      reset: () => setData({ created: [], overrides: {} }),
+      reset: () => setData({ created: [], overrides: {}, accounts: {} }),
+      accountOf,
+      changePassword: (id, password) => setAccount(id, { password, changed: true }),
+      resetPassword: (id) => setAccount(id, { password: initialPassword(userById(id)), changed: false }),
     }),
-    [userId, cases, saveCase, redirectTo],
+    [userId, cases, saveCase, redirectTo, accountOf, setAccount],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

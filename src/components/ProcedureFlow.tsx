@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Pencil } from 'lucide-react'
 import type { AttemptTime, HelpLevel, ProcedureRecord, ProcedureType, Role } from '../types'
-import { ATTEMPT_TIMES, HELP, INCIDENTS, PROCEDURES, procDef } from '../data/catalog'
+import { ATTEMPT_TIMES, HELP, INCIDENTS, INCIDENT_OTHER, PROCEDURES, procDef } from '../data/catalog'
 import { isCusumFailure } from '../lib/cusum'
 import { newId } from '../store'
 import { ChoiceList, MultiChips, YesNo } from './ui'
 
 interface Draft {
   type?: ProcedureType
-  otherLabel?: string
+  label?: string
   firstOperator?: boolean
   success?: boolean
   firstTry?: boolean
@@ -19,8 +19,8 @@ interface Draft {
   help?: HelpLevel
   hadIncident?: boolean
   incidents: string[]
+  incidentOther?: string
   incidentsDone?: boolean
-  safety?: boolean
   notes?: string
 }
 
@@ -38,7 +38,7 @@ function fromRecord(p?: ProcedureRecord): Draft {
   if (!p) return { incidents: [] }
   return {
     type: p.type,
-    otherLabel: p.otherLabel,
+    label: p.label,
     firstOperator: p.firstOperator,
     success: p.success,
     firstTry: p.success ? p.attempts === 1 : undefined,
@@ -47,8 +47,8 @@ function fromRecord(p?: ProcedureRecord): Draft {
     help: p.help,
     hadIncident: p.incidents.length > 0,
     incidents: p.incidents,
+    incidentOther: p.incidentOther,
     incidentsDone: true,
-    safety: p.safety,
     notes: p.notes,
   }
 }
@@ -57,24 +57,38 @@ function toRecord(d: Draft, id: string): ProcedureRecord {
   return {
     id,
     type: d.type!,
-    otherLabel: d.type === 'otro' ? d.otherLabel : undefined,
+    label: procDef(d.type!).needsLabel ? d.label?.trim() || undefined : undefined,
     firstOperator: d.firstOperator!,
     success: d.success!,
     attempts: d.success && d.firstTry ? 1 : d.attempts!,
     time: d.time!,
     help: d.help!,
-    safety: d.safety!,
     incidents: d.hadIncident ? d.incidents : [],
+    incidentOther: d.hadIncident && d.incidents.includes(INCIDENT_OTHER) ? d.incidentOther?.trim() || undefined : undefined,
     notes: d.notes?.trim() || undefined,
   }
 }
 
-export function ProcedureFlow({ initial, perspective, onDone, onCancel }: { initial?: ProcedureRecord; perspective: Role; onDone: (p: ProcedureRecord) => void; onCancel: () => void }) {
+export function ProcedureFlow({
+  initial,
+  perspective,
+  usedTypes = [],
+  onDone,
+  onCancel,
+}: {
+  initial?: ProcedureRecord
+  perspective: Role
+  /** Un procedimiento no se puede repetir dentro del mismo caso */
+  usedTypes?: ProcedureType[]
+  onDone: (p: ProcedureRecord) => void
+  onCancel: () => void
+}) {
   const [d, setD] = useState<Draft>(() => fromRecord(initial))
   const [editing, setEditing] = useState<string | null>(null)
   const curRef = useRef<HTMLDivElement>(null)
   const you = perspective === 'residente'
   const t = (res: string, att: string) => (you ? res : att)
+  const blocked = (id: ProcedureType) => id !== 'otro' && id !== initial?.type && usedTypes.includes(id)
 
   const set = (p: Partial<Draft>) => {
     setD((x) => ({ ...x, ...p }))
@@ -86,8 +100,8 @@ export function ProcedureFlow({ initial, perspective, onDone, onCancel }: { init
       key: 'type',
       title: '¿Qué procedimiento?',
       visible: () => true,
-      answered: (d) => !!d.type && (d.type !== 'otro' || !!d.otherLabel?.trim()),
-      summary: (d) => (d.type === 'otro' ? d.otherLabel ?? 'Otro' : procDef(d.type!).short),
+      answered: (d) => !!d.type && (!procDef(d.type).needsLabel || !!d.label?.trim()),
+      summary: (d) => (procDef(d.type!).needsLabel && d.label ? `${procDef(d.type!).short}: ${d.label}` : procDef(d.type!).short),
       render: (d, set) => (
         <>
           <div className="grid2">
@@ -95,18 +109,26 @@ export function ProcedureFlow({ initial, perspective, onDone, onCancel }: { init
               <button
                 key={p.id}
                 type="button"
+                disabled={blocked(p.id)}
                 className={`choice${d.type === p.id ? ' on' : ''}`}
-                style={{ padding: '12px', fontSize: 14 }}
-                onClick={() => (p.id === 'otro' ? setD((x) => ({ ...x, type: 'otro' })) : set({ type: p.id }))}
+                style={{ padding: '12px', fontSize: 14, opacity: blocked(p.id) ? 0.35 : 1 }}
+                onClick={() => (p.needsLabel ? setD((x) => ({ ...x, type: p.id, label: '' })) : set({ type: p.id, label: undefined }))}
               >
                 {p.label}
               </button>
             ))}
           </div>
-          {d.type === 'otro' && (
+          {usedTypes.length > 0 && <div className="tiny muted mt8">Los que ya registraste en este caso aparecen desactivados.</div>}
+          {d.type && procDef(d.type).needsLabel && (
             <div className="row mt12">
-              <input className="input" placeholder="¿Cuál?" autoFocus value={d.otherLabel ?? ''} onChange={(e) => setD((x) => ({ ...x, otherLabel: e.target.value }))} />
-              <button className="btn primary" disabled={!d.otherLabel?.trim()} onClick={() => setEditing(null)}>
+              <input
+                className="input"
+                placeholder={d.type === 'periferico' ? '¿Cuál bloqueo?' : '¿Cuál procedimiento?'}
+                autoFocus
+                value={d.label ?? ''}
+                onChange={(e) => setD((x) => ({ ...x, label: e.target.value }))}
+              />
+              <button className="btn primary" disabled={!d.label?.trim()} onClick={() => setEditing(null)}>
                 OK
               </button>
             </div>
@@ -206,25 +228,23 @@ export function ProcedureFlow({ initial, perspective, onDone, onCancel }: { init
       key: 'incidents',
       title: '¿Cuál o cuáles?',
       visible: (d) => d.hadIncident === true,
-      answered: (d) => !!d.incidentsDone && d.incidents.length > 0,
-      summary: (d) => d.incidents.join(', '),
+      answered: (d) => !!d.incidentsDone && d.incidents.length > 0 && (!d.incidents.includes(INCIDENT_OTHER) || !!d.incidentOther?.trim()),
+      summary: (d) => d.incidents.map((i) => (i === INCIDENT_OTHER && d.incidentOther ? d.incidentOther : i)).join(', '),
       render: (d) => (
         <>
           <MultiChips options={INCIDENTS} value={d.incidents} onChange={(v) => setD((x) => ({ ...x, incidents: v }))} />
-          <button className="btn primary block mt12" disabled={!d.incidents.length} onClick={() => set({ incidentsDone: true })}>
+          {d.incidents.includes(INCIDENT_OTHER) && (
+            <input className="input mt12" placeholder="¿Cuál incidente?" value={d.incidentOther ?? ''} onChange={(e) => setD((x) => ({ ...x, incidentOther: e.target.value }))} />
+          )}
+          <button
+            className="btn primary block mt12"
+            disabled={!d.incidents.length || (d.incidents.includes(INCIDENT_OTHER) && !d.incidentOther?.trim())}
+            onClick={() => set({ incidentsDone: true })}
+          >
             Continuar
           </button>
         </>
       ),
-    },
-    {
-      key: 'safety',
-      title: '¿Se cumplieron los criterios de seguridad?',
-      hint: 'Checklist, monitoreo completo, preoxigenación / técnica aséptica según el caso',
-      visible: () => true,
-      answered: (d) => d.safety !== undefined,
-      summary: (d) => (d.safety ? 'Sí' : 'No'),
-      render: (d, set) => <YesNo value={d.safety} onPick={(v) => set({ safety: v })} />,
     },
   ]
 
@@ -263,11 +283,11 @@ export function ProcedureFlow({ initial, perspective, onDone, onCancel }: { init
 
       {done && preview && (
         <div className="question" ref={curRef}>
-          <div className={`card flat mt12`} style={{ background: fail ? 'var(--warn-soft)' : 'var(--good-soft)', border: 0 }}>
+          <div className="card flat mt12" style={{ background: fail ? 'var(--warn-soft)' : 'var(--good-soft)', border: 0 }}>
             <div className="small bold" style={{ color: fail ? 'var(--warn-ink)' : 'var(--good-ink)' }}>
               Para la curva CUSUM esto cuenta como {fail ? 'falla' : 'éxito'}
             </div>
-            <div className="tiny ink2 mt8" style={{ marginTop: 4 }}>
+            <div className="tiny ink2" style={{ marginTop: 4 }}>
               Se calcula solo: éxito = se logró, ≤ 2 intentos y sin relevo.
             </div>
           </div>

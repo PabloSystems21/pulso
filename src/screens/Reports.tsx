@@ -5,8 +5,7 @@ import { useStore } from '../store'
 import type { Grade } from '../types'
 import { RESIDENTS, userById } from '../data/users'
 import { ANTS_DOMAINS, ANTS_TARGET, PROCEDURES, SUPERVISION, expectedBand, procDef } from '../data/catalog'
-import { antsDomains, avg, evaluatedOf, monthsIntoGradeAt } from '../lib/stats'
-import { isCusumFailure } from '../lib/cusum'
+import { antsDomains, avg, caseSupervision, chartCases, failsFor, monthsIntoGradeAt } from '../lib/stats'
 import { fmtDuration, monthLong } from '../lib/dates'
 import { Kpi, TopBar } from '../components/ui'
 import { DomainBars, ORDINAL_BLUE, StackedBar } from '../components/charts'
@@ -32,32 +31,36 @@ export default function Reports() {
       ? `${monthLong(end.getMonth())} ${end.getFullYear()}`
       : `${monthLong(start.getMonth()).slice(0, 3)} – ${monthLong(end.getMonth()).slice(0, 3)} ${end.getFullYear()}`
 
+  const keyStr = keys.join()
   const data = useMemo(() => {
     const inP = cases.filter((c) => c.grade === grade && keys.includes(c.date.slice(0, 7)))
-    const ev = evaluatedOf(inP)
+    const ev = chartCases(inP)
     const residents = RESIDENTS.filter((r) => inP.some((c) => c.residentId === r.id))
     return { inP, ev, residents }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cases, grade, keys.join()])
+  }, [cases, grade, keyStr])
 
   const { inP, ev, residents } = data
-  const sup = avg(ev.map((c) => c.evaluation.supervision))
-  const midDate = `${keys[keys.length - 1]}-15`
-  const [lo] = expectedBand(grade, monthsIntoGradeAt(midDate))
-  const progression = ev.length ? ev.filter((c) => c.evaluation.countsForProgression).length / ev.length : 0
+  const sup = avg(ev.map((c) => caseSupervision(c.evaluation)))
+  const [lo] = expectedBand(grade, monthsIntoGradeAt(`${keys[keys.length - 1]}-15`))
   const durations = avg(ev.map((c) => c.evaluation.durationSec))
   const dom = antsDomains(ev.map((c) => c.evaluation))
-  const dist = [1, 2, 3, 4, 5].map((v) => ({ label: SUPERVISION[v - 1].short, value: ev.filter((c) => c.evaluation.supervision === v).length, color: ORDINAL_BLUE[v - 1] }))
+  const dist = [1, 2, 3, 4, 5].map((v) => ({
+    label: SUPERVISION[v - 1].short,
+    value: ev.flatMap((c) => Object.values(c.evaluation.supervision)).filter((x) => x === v).length,
+    color: ORDINAL_BLUE[v - 1],
+  }))
   const procRows = PROCEDURES.filter((p) => p.id !== 'otro')
     .map((def) => {
       const list = inP.flatMap((c) => c.procedures.filter((p) => p.type === def.id && p.firstOperator))
-      const ok = list.filter((p) => !isCusumFailure(p, procDef(p.type))).length
+      const ok = list.filter((p) => !failsFor(p)).length
       return { def, n: list.length, rate: list.length ? ok / list.length : 0 }
     })
     .filter((r) => r.n > 0)
     .sort((a, b) => b.n - a.n)
-  const followUps = ev.filter((c) => c.evaluation.followUp !== 'no').length
-  const risks = ev.filter((c) => c.evaluation.patientRisk !== 'no').length
+  const noAttending = inP.filter((c) => !c.attendingId).length
+  const risks = ev.filter((c) => c.evaluation.patientRisk).length
+  const reviews = ev.filter((c) => c.evaluation.needsProfessorReview).length
   const themes = Object.entries(
     ev.reduce<Record<string, number>>((acc, c) => {
       acc[c.evaluation.improve] = (acc[c.evaluation.improve] ?? 0) + 1
@@ -86,14 +89,12 @@ export default function Reports() {
             </button>
           ))}
         </div>
-        <div className="row mt12">
-          <div className="segmented-tabs grow">
-            {(['mes', 'trimestre'] as const).map((p) => (
-              <button key={p} className={period === p ? 'on' : ''} onClick={() => setPeriod(p)}>
-                {p === 'mes' ? 'Mensual' : 'Trimestral'}
-              </button>
-            ))}
-          </div>
+        <div className="segmented-tabs mt12">
+          {(['mes', 'trimestre'] as const).map((p) => (
+            <button key={p} className={period === p ? 'on' : ''} onClick={() => setPeriod(p)}>
+              {p === 'mes' ? 'Mensual' : 'Trimestral'}
+            </button>
+          ))}
         </div>
         <div className="row between mt12 card tight">
           <button className="icon-btn" style={{ boxShadow: 'none', background: '#eef2f3' }} onClick={() => setOffset(offset + months)} aria-label="Anterior">
@@ -102,16 +103,22 @@ export default function Reports() {
           <span className="bold" style={{ textTransform: 'capitalize' }}>
             {label}
           </span>
-          <button className="icon-btn" style={{ boxShadow: 'none', background: '#eef2f3' }} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - months))} aria-label="Siguiente">
+          <button
+            className="icon-btn"
+            style={{ boxShadow: 'none', background: '#eef2f3' }}
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - months))}
+            aria-label="Siguiente"
+          >
             <ChevronRight size={18} />
           </button>
         </div>
 
         <div className="grid2 mt12">
-          <Kpi label="Evaluaciones" value={ev.length} hint={`${inP.length} casos registrados`} />
-          <Kpi label="Supervisión media" value={sup?.toFixed(2) ?? '—'} hint={`Esperado ≥ ${lo.toFixed(1)}`} />
-          <Kpi label="Cuentan p/ progresión" value={`${Math.round(progression * 100)}%`} />
+          <Kpi label="Casos registrados" value={inP.length} hint={`${ev.length} ya evaluados`} />
+          <Kpi label="O-SCORE medio" value={sup?.toFixed(2) ?? '—'} hint={`Esperado ≥ ${lo.toFixed(1)}`} />
           <Kpi label="Tiempo por evaluación" value={durations ? fmtDuration(durations) : '—'} hint="min promedio" />
+          <Kpi label="Casos sin adscrito" value={noAttending} hint="requieren revisión" />
         </div>
 
         <div className="h2">Residentes {grade}</div>
@@ -121,7 +128,7 @@ export default function Reports() {
               <tr>
                 <th>Residente</th>
                 <th className="r">Casos</th>
-                <th className="r">Superv.</th>
+                <th className="r">O-SCORE</th>
                 <th className="r">ANTS</th>
                 <th className="r">Estado</th>
               </tr>
@@ -129,7 +136,7 @@ export default function Reports() {
             <tbody>
               {residents.map((r) => {
                 const rev = ev.filter((c) => c.residentId === r.id)
-                const s = avg(rev.map((c) => c.evaluation.supervision))
+                const s = avg(rev.map((c) => caseSupervision(c.evaluation)))
                 const a = avg(Object.values(antsDomains(rev.map((c) => c.evaluation))))
                 return (
                   <tr key={r.id}>
@@ -156,9 +163,10 @@ export default function Reports() {
           </table>
         </div>
 
-        <div className="h2">Distribución de supervisión</div>
+        <div className="h2">Distribución del O-SCORE</div>
         <div className="card">
           <StackedBar parts={dist} />
+          <div className="tiny muted mt8">Cada procedimiento evaluado cuenta como un dato.</div>
         </div>
 
         <div className="h2">ANTS del grado</div>
@@ -179,7 +187,7 @@ export default function Reports() {
             <tbody>
               {procRows.map((r) => (
                 <tr key={r.def.id}>
-                  <td>{r.def.short}</td>
+                  <td>{procDef(r.def.id).short}</td>
                   <td className="r num">{r.n}</td>
                   <td className="r num">{Math.round(r.rate * 100)}%</td>
                 </tr>
@@ -199,11 +207,11 @@ export default function Reports() {
         </div>
 
         <div className="grid2 mt12">
-          <Kpi label="Seguimientos solicitados" value={followUps} />
-          <Kpi label="Riesgo atribuible" value={risks} hint="potencial o real" />
+          <Kpi label="Ameritan revisión" value={reviews} hint="marcados por el adscrito" />
+          <Kpi label="Riesgo al paciente" value={risks} hint="atribuible al residente" />
         </div>
         <p className="tiny muted mt16">
-          Reporte generado automáticamente a partir de {ev.length} evaluaciones de {new Set(ev.map((c) => c.evaluation.attendingId)).size} adscritos (
+          Reporte generado a partir de {ev.length} evaluaciones de {new Set(ev.map((c) => c.evaluation.attendingId)).size} adscritos (
           {[...new Set(ev.map((c) => c.evaluation.attendingId))].map((id) => userById(id).name.split(' ')[0]).join(', ')}).
         </p>
       </div>

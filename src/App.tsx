@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 import { HashRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
-import { BarChart3, ClipboardList, Home, Plus, UserRound, Users } from 'lucide-react'
+import { BarChart3, Bell, ClipboardCheck, ClipboardList, Home, Plus, UserRound, Users } from 'lucide-react'
 import { StoreProvider, useStore } from './store'
-import { TabBar } from './components/ui'
+import { TabBar, type TabItem } from './components/ui'
 import type { Role } from './types'
 import Login from './screens/Login'
 import ResidentHome from './screens/ResidentHome'
@@ -15,6 +15,8 @@ import CaseDetail from './screens/CaseDetail'
 import Progress from './screens/Progress'
 import ProcedureDetail from './screens/ProcedureDetail'
 import AttendingHome from './screens/AttendingHome'
+import Alerts from './screens/Alerts'
+import Team from './screens/Team'
 import Residents from './screens/Residents'
 import Reports from './screens/Reports'
 import Profile from './screens/Profile'
@@ -37,29 +39,45 @@ function Shell({ role, tabs }: { role: Role; tabs?: boolean }) {
   }, [matches, redirectTo, clearRedirect])
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== role) return <Navigate to={redirectTo ?? home(user.role)} replace />
+
   const pending = cases.filter((c) => c.status === 'pendiente' && c.attendingId === user.id).length
-  const items =
-    role === 'residente'
-      ? [
-          { to: '/r', label: 'Inicio', icon: <Home size={22} />, end: true },
-          { to: '/r/casos', label: 'Mis casos', icon: <ClipboardList size={22} /> },
-          { to: '/r/nuevo', label: 'Registrar', icon: <Plus size={26} />, fab: true },
-          { to: '/r/progreso', label: 'Progreso', icon: <BarChart3 size={22} /> },
-          { to: '/r/perfil', label: 'Perfil', icon: <UserRound size={22} /> },
-        ]
-      : [
-          { to: '/a', label: 'Inicio', icon: <Home size={22} />, end: true, badge: pending },
-          { to: '/a/residentes', label: 'Residentes', icon: <Users size={22} /> },
-          { to: '/a/nuevo', label: 'Evaluar', icon: <Plus size={26} />, fab: true },
-          { to: '/a/reportes', label: 'Reportes', icon: <BarChart3 size={22} /> },
-          { to: '/a/perfil', label: 'Perfil', icon: <UserRound size={22} /> },
-        ]
+  let items: TabItem[]
+  if (role === 'residente') {
+    items = [
+      { to: '/r', label: 'Inicio', icon: <Home size={22} />, end: true },
+      { to: '/r/casos', label: 'Mis casos', icon: <ClipboardList size={22} /> },
+      { to: '/r/nuevo', label: 'Registrar', icon: <Plus size={26} />, fab: true },
+      { to: '/r/progreso', label: 'Progreso', icon: <BarChart3 size={22} /> },
+      { to: '/r/perfil', label: 'Perfil', icon: <UserRound size={22} /> },
+    ]
+  } else if (user.profesor) {
+    items = [
+      { to: '/a', label: 'Por evaluar', icon: <Home size={22} />, end: true, badge: pending },
+      { to: '/a/alertas', label: 'Alertas', icon: <Bell size={22} /> },
+      { to: '/a/residentes', label: 'Residentes', icon: <Users size={22} /> },
+      { to: '/a/reportes', label: 'Reportes', icon: <BarChart3 size={22} /> },
+      { to: '/a/perfil', label: 'Perfil', icon: <UserRound size={22} /> },
+    ]
+  } else {
+    items = [
+      { to: '/a', label: 'Por evaluar', icon: <Home size={22} />, end: true, badge: pending },
+      { to: '/a/evaluados', label: 'Evaluados', icon: <ClipboardCheck size={22} /> },
+      { to: '/a/perfil', label: 'Perfil', icon: <UserRound size={22} /> },
+    ]
+  }
   return (
     <div className="app">
       <Outlet />
       {tabs && <TabBar items={items} />}
     </div>
   )
+}
+
+/** Vistas exclusivas del profesor (moderador del programa) */
+function ProfOnly() {
+  const { user } = useStore()
+  if (!user?.profesor) return <Navigate to="/a" replace />
+  return <Outlet />
 }
 
 function Root() {
@@ -85,22 +103,26 @@ export default function App() {
             <Route path="procedimiento/:proc" element={<ProcedureDetail />} />
           </Route>
           <Route path="/r" element={<Shell role="residente" />}>
-            <Route path="nuevo" element={<NewCase mode="residente" />} />
+            <Route path="nuevo" element={<NewCase />} />
             <Route path="enviado/:id" element={<Sent />} />
           </Route>
 
           <Route path="/a" element={<Shell role="adscrito" tabs />}>
             <Route index element={<AttendingHome />} />
-            <Route path="residentes" element={<Residents />} />
-            <Route path="residente/:rid" element={<Progress />} />
-            <Route path="residente/:rid/procedimiento/:proc" element={<ProcedureDetail />} />
-            <Route path="residente/:rid/caso/:id" element={<CaseDetail />} />
+            <Route path="evaluados" element={<CasesList />} />
             <Route path="caso/:id" element={<CaseDetail />} />
-            <Route path="reportes" element={<Reports />} />
             <Route path="perfil" element={<Profile />} />
+            <Route element={<ProfOnly />}>
+              <Route path="alertas" element={<Alerts />} />
+              <Route path="equipo" element={<Team />} />
+              <Route path="residentes" element={<Residents />} />
+              <Route path="residente/:rid" element={<Progress />} />
+              <Route path="residente/:rid/procedimiento/:proc" element={<ProcedureDetail />} />
+              <Route path="residente/:rid/caso/:id" element={<CaseDetail />} />
+              <Route path="reportes" element={<Reports />} />
+            </Route>
           </Route>
           <Route path="/a" element={<Shell role="adscrito" />}>
-            <Route path="nuevo" element={<NewCase mode="adscrito" />} />
             <Route path="evaluar/:id" element={<Evaluate />} />
             <Route path="listo/:id" element={<Evaluated />} />
           </Route>

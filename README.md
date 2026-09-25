@@ -1,19 +1,18 @@
 # Pulso · Evaluación de residentes de Anestesiología
 
-Prototipo *mobile-first* (React + Vite + TypeScript, sin backend) de la propuesta de evaluación digital:
+Prototipo *mobile-first* (React + Vite + TypeScript, sin backend) de la herramienta de evaluación.
+Versión **v0.2**: incorpora las notas de la junta con el equipo de enseñanza.
 
-- **Registro por caso** del residente en ~1 minuto: flujo conversacional ("¿Lo lograste? → ¿Al primer intento? → ¿En cuál?").
-- **Evaluación del adscrito** en ~2 minutos (versión corta) o ~6 minutos (versión completa):
-  - **O-SCORE**: supervisión que requirió + prospectiva/entrustment.
-  - **ANTS**: habilidades no técnicas.
-  - **Mini-CEX**: juicio clínico.
-  - **Desempeño global** y **profesionalismo** (solo versión completa).
-  - **Retroalimentación obligatoria** y **cierre**.
-- **CUSUM automática** por residente y procedimiento: líneas de decisión, competencia alcanzada, alertas por caída de desempeño y periodos sin exposición.
-- **Tableros**:
-  - Progreso longitudinal con la banda esperada según el grado (R1/R2/R3).
-  - Portafolio por residente.
-  - Reporte mensual o trimestral por grado.
+- **El residente registra el caso** en ~1 minuto. Ese registro **es su autoevaluación**.
+  Flujo conversacional: "¿Lo lograste? → ¿Al primer intento? → ¿En cuál?".
+- **El adscrito solo evalúa registros ya hechos** (no captura casos):
+  - **O-SCORE por procedimiento** (si hubo 3 procedimientos, son 3 calificaciones).
+  - **Entrustment, ANTS y Mini-CEX por caso.**
+  - Retroalimentación obligatoria y cierre.
+- **El profesor** (siempre es adscrito) además **modera el programa**: ve todas las alertas,
+  el estado del equipo de adscritos, los reportes y valida los casos marcados.
+- **CUSUM automática** por residente y procedimiento, con líneas de decisión y alertas.
+- **Reportes** mensuales y trimestrales por grado.
 
 En computadora se ve con el mismo layout de celular (marco centrado).
 
@@ -24,101 +23,88 @@ En computadora se ve con el mismo layout de celular (marco centrado).
 ```bash
 cd "C:\Users\Pablo R\React\pulso"
 npm install        # solo la primera vez
-npm run dev        # abre http://localhost:5173 (si está ocupado, Vite usa otro puerto)
+npm run dev
 ```
 
-Para probar en tu celular en la misma red Wi-Fi, usa la URL "Network" que imprime `npm run dev`.
+---
+
+## Usuarios del demo
+
+El usuario **es el código de empleado** (adscritos) o la **matrícula** (residentes).
+La contraseña genérica inicial es `Anes.<código>`; la app pide cambiarla.
+
+| Código | Quién | Rol |
+|---|---|---|
+| 10482 | Dr. Felipe González | Adscrito · **Profesor** |
+| 10517 | Dra. Ana Sofía Treviño | Adscrito · Profesor |
+| 10603 | Dra. Mariana Ortiz | Adscrito · Profesor |
+| 10744 | Dr. Luis Herrera | Adscrito · Profesor |
+| 10896 | Dr. Raúl Vega | Adscrito |
+| 10921 | Dra. Paula Ibarra | Adscrito |
+| 26104 | Pablo Rodríguez | Residente R1 |
+| 26118 | Daniela Cruz | Residente R1 |
+| 25073 / 25089 | Jorge Salinas / Valeria Mendoza | Residentes R2 |
+| 24035 / 24042 | Andrés Fuentes / Regina Lara | Residentes R3 |
+
+**Links directos:** `https://TU-SITIO/?as=10482` (Felipe) · `https://TU-SITIO/?as=26104` (Pablo).
 
 ---
 
-## Guion del demo (happy path, ~5 minutos)
+## Guion del demo (~6 minutos)
 
-1. Entra como **Pablo Rodríguez (R1)** y toca **"Regístralo en 1 minuto"**.
-2. Llena la identificación: quirófano Q3, **Dr. Felipe González** → Siguiente.
-3. Llena la cirugía: Cirugía general → Colecistectomía laparoscópica → Electivo → ASA 2 → Siguiente.
-4. Llena el contexto: General · Media · Obesidad → Siguiente.
-5. Toca **"Agregar procedimiento"** y responde: Intubación → ¿Primer operador? Sí → ¿Lo lograste? Sí → ¿Al primer intento? **No** → ¿En cuál? **2º** → 5–10 min → Solo verbal → Sin incidentes → Seguridad Sí.
-   - La app te dice si cuenta como éxito o falla para la CUSUM.
-6. Enviar → pantalla de éxito ("Lo registraste en 0:45 min").
-7. Toca **"Entrar como Dr. Felipe González"** y se abre directo la evaluación. Recorre:
-   - Supervisión → prospectiva → juicio clínico → ANTS → retroalimentación (con frases rápidas) → cierre.
-   - Al terminar: "Completada en 1:40 min", y las curvas se actualizan.
-8. Toca **"Entrar como Pablo Rodríguez"** para ver la retroalimentación que recibe el residente.
-   - Luego ve a **Progreso**: O-SCORE vs. lo esperado para R1, ANTS y CUSUM por procedimiento (intubación: competencia en el intento #33).
-9. **El peor caso:** como Felipe, abre **Residentes → Daniela Cruz**.
-   - Tiene una alerta de *caída de desempeño en neuroaxial* (6 de 6 como falla, la CUSUM cruzó el límite inaceptable) y seguimientos activos.
-   - En **Reportes** está el consolidado mensual y trimestral por grado.
+1. Entra como **Pablo Rodríguez (26104)** y toca **"Regístralo en 1 minuto"**.
+2. Identificación: área **Quirófano**, jornada **Ordinaria**, supervisó **Dr. Felipe González**.
+   - Enséñale también la opción **"Sin adscrito"**: pregunta si estuvo solo o con un residente mayor, y avisa que se notifica a todos los profesores.
+3. El caso: Electivo · ASA 2 · General · Obesidad. (Si marcas evento crítico, exige explicación.)
+4. Procedimiento: **Laringoscopia directa** → primer operador Sí → ¿lo lograste? Sí → ¿al primer intento? **No** → **2º** → 5–10 min → solo verbal → sin incidentes.
+   - La app dice sola si cuenta como **éxito o falla** para la CUSUM.
+5. Autoevaluación obligatoria: "¿Identificaste alguna fortaleza, dificultad u oportunidad de mejora?" → **Enviar**.
+6. Toca **"Entrar como Dr. Felipe González"**: se abre la evaluación.
+   - O-SCORE **de ese procedimiento** → entrustment **del caso** → ANTS → Mini-CEX → retroalimentación → cierre.
+7. Toca **"Entrar como Pablo Rodríguez"**: ahí se ve **separada** su autoevaluación de la evaluación del adscrito.
+   - En **Progreso**: O-SCORE contra lo esperado para R1, ANTS, y CUSUM por procedimiento (laringoscopia: competencia en el intento #40).
+8. **Vista de profesor** (Felipe): pestaña **Alertas** → casos sin adscrito, riesgos, casos que ameritan revisión y caídas de CUSUM.
+   - Dentro, **Equipo de adscritos**: quién tiene pendientes, qué O-SCORE promedio pone cada quien y quién no ha cambiado su contraseña (con botón para restablecerla).
+   - **Reportes**: consolidado mensual y trimestral por grado.
+9. **Contraste de roles:** entra como **Dr. Raúl Vega (10896)**, que es adscrito sin ser profesor: solo ve sus pendientes y lo que ha evaluado. Sin alertas, sin reportes.
 
-**Links directos** para mandar por WhatsApp:
-
-- `https://TU-SITIO/?as=fgonzalez` entra como Felipe.
-- `https://TU-SITIO/?as=prodriguez` entra como Pablo.
-
-> Importante: no hay backend. Lo que captures se guarda **en el navegador de ese celular** (localStorage).
-> Si tu hermano abre el link en su teléfono, verá el historial simulado, pero **no** los casos que tú capturaste en el tuyo.
-> Para el demo, hagan todo en un mismo teléfono usando los botones "Entrar como…".
-> **Perfil → Reiniciar datos del demo** borra lo capturado.
+> Sin backend: lo que captures se guarda **en ese navegador**. Para el demo, hagan todo en un mismo
+> teléfono con los botones "Entrar como…". **Perfil → Reiniciar datos del demo** lo deja limpio.
 
 ---
 
-## Publicarlo (hosting)
+## Reglas de negocio ya implementadas
 
-El build es 100% estático (`dist/`) y usa rutas con `#`, así que funciona en cualquier hosting estático sin configuración extra.
+- Un procedimiento **no se puede repetir** dentro del mismo caso.
+- **Nada se puede editar** después de enviarse (ni el residente ni el adscrito). Correcciones: por el administrador.
+- Jornada: solo **Ordinaria** (matutino) o **Guardia** (complementaria/vespertino).
+- Área: **Quirófano / Tococirugía / Fuera de quirófano**. No se pregunta el número de quirófano ni la cirugía.
+- **ASA 1 a 6.**
+- Comorbilidades: vía aérea difícil, obesidad, embarazo y **paciente pediátrico** (sustituye a la edad).
+- Evento crítico: Sí/No; si es Sí, explicación **obligatoria**.
+- Riesgo al paciente: Sí/No; si es Sí, explicación **obligatoria** y alerta a los profesores.
+- **No hay cambios de rol**: si alguien cambia de puesto se crea un usuario nuevo; el anterior se conserva.
+- No se registran residentes externos ni de intercambio.
 
-### Opción A — Netlify Drop (la más rápida, gratis, ~3 min)
+---
 
-1. Genera el build:
-   ```bash
-   cd "C:\Users\Pablo R\React\pulso"
-   npm run build
-   ```
-   Esto crea la carpeta `C:\Users\Pablo R\React\pulso\dist`.
-2. Abre https://app.netlify.com/drop y crea tu cuenta gratis (con GitHub o correo).
-3. **Arrastra la carpeta `dist`** a la página. En segundos te da una URL tipo `https://nombre-raro-123.netlify.app`.
-4. Para ponerle un nombre bonito, entra al sitio y ve a **Site configuration → Change site name**, por ejemplo `pulso-anestesia`. Queda `https://pulso-anestesia.netlify.app`.
-5. Para actualizar después: `npm run build`, luego **Deploys** en tu sitio, y arrastra de nuevo la carpeta `dist`.
+## Publicarlo
 
-### Opción B — GitHub + Vercel (recomendada: cada `git push` se publica solo, gratis)
+El build es estático (`dist/`) y usa rutas con `#`, así que corre en cualquier hosting.
 
-1. Crea un repositorio vacío en https://github.com/new, llamado `pulso` (puede ser privado, sin README).
-2. En PowerShell:
-   ```bash
-   cd "C:\Users\Pablo R\React\pulso"
-   git init
-   git add .
-   git commit -m "Pulso v0.1"
-   git branch -M main
-   git remote add origin https://github.com/TU_USUARIO/pulso.git
-   git push -u origin main
-   ```
-3. Ve a https://vercel.com/signup y entra con GitHub (plan **Hobby**, gratis).
-4. Haz clic en **Add New… → Project**, busca `pulso` y dale **Import**.
-5. Vercel detecta **Vite** solo. Confirma estos valores y dale **Deploy**:
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-6. En ~1 minuto tienes `https://pulso-xxxx.vercel.app`. Cada cambio que subas con `git push` se vuelve a publicar solo.
-
-### Opción C — Vercel desde la terminal (sin GitHub)
+**Ya está en Vercel conectado a GitHub:** cada `git push` republica.
 
 ```bash
 cd "C:\Users\Pablo R\React\pulso"
-npx vercel login      # abre el navegador para iniciar sesión
-npx vercel            # primera vez: acepta las opciones por defecto
-npx vercel --prod     # publica en la URL de producción
+git add .
+git commit -m "v0.2: cambios de la junta"
+git push
 ```
 
-### Dominio propio (opcional, lo único que cuesta)
+**Alternativa sin Git (Netlify Drop):** `npm run build` y arrastra la carpeta `dist` a https://app.netlify.com/drop
 
-1. Compra el dominio en Cloudflare Registrar, Porkbun o Namecheap. Un `.com` cuesta ≈ 10–15 USD al año.
-2. Conéctalo:
-   - **Vercel:** Project → Settings → Domains → Add. Vercel te muestra los registros DNS exactos (un A o un CNAME); cópialos en tu proveedor del dominio.
-   - **Netlify:** Domain management → Add a domain, y sigue el asistente.
-3. El HTTPS se configura solo.
-
-### Instalarlo como "app" en el celular
-
-- **iPhone (Safari):** abre la URL → Compartir → **Agregar a pantalla de inicio**.
-- **Android (Chrome):** abre la URL → menú ⋮ → **Agregar a pantalla principal**.
+**Para bajar el demo público** después de la presentación: en Vercel, *Settings → General → Delete Project*.
+El código sigue en GitHub y lo pueden ver local con `npm run dev`.
 
 ---
 
@@ -126,22 +112,21 @@ npx vercel --prod     # publica en la URL de producción
 
 ```
 src/
-  types.ts              Modelo de datos (caso, procedimiento, evaluación)
+  types.ts              Modelo (caso, procedimiento, evaluación, revisión del profesor)
   data/catalog.ts       Escalas, anclas, procedimientos, umbrales CUSUM, expectativas por grado
-  data/users.ts         Usuarios demo (adscritos y residentes)
-  data/seed.ts          Generador determinista del historial simulado (~1,100 casos)
+  data/users.ts         Usuarios demo, códigos y contraseña genérica
+  data/seed.ts          Generador determinista del historial simulado (~1,200 casos)
   lib/cusum.ts          CUSUM (Kestin/Bolsin): h0, h1, s, competencia, monitoreo de caídas
-  lib/stats.ts          Promedios, ANTS por dominio, alertas, resúmenes por procedimiento
-  store.tsx             Estado global + persistencia en localStorage
+  lib/stats.ts          Promedios, ANTS por dominio, alertas del residente y del programa
+  store.tsx             Estado, sesión, contraseñas y persistencia en localStorage
   components/           UI, gráficas SVG, flujo conversacional de procedimiento
-  screens/              Pantallas del residente y del adscrito
+  screens/              Residente · Adscrito · Profesor
 ```
 
-## Siguiente paso: backend real
+## Pendientes de definición (ver reporte de la junta)
 
-Cuando se valide el flujo, la opción más directa es **Supabase** (Postgres + Auth + permisos por fila; el plan gratis alcanza de sobra para un programa de residencia):
-
-- Tablas `users`, `cases`, `procedures`, `evaluations`, con el mismo modelo de `src/types.ts`.
-- Reemplazar `store.tsx` por llamadas a Supabase. Las pantallas no cambian.
-- Permisos: el residente ve solo lo suyo; el adscrito ve y evalúa a todos; el equipo de enseñanza ve los reportes.
-- Antes de usar datos reales, revisar privacidad (LFPDPPP): la app **no** guarda nombre ni expediente del paciente.
+- Lista **ampliada de ANTS** que dará enseñanza.
+- **p0, p1 y definición de falla** por procedimiento (hoy son valores provisionales de literatura).
+- **Umbrales esperados por grado** (hoy la banda verde es provisional).
+- Si un caso "amerita revisión" debe **excluirse de las gráficas** hasta que el profesor lo valide:
+  se cambia con la constante `EXCLUDE_UNDER_REVIEW` en `src/data/catalog.ts`.

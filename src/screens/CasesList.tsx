@@ -8,14 +8,20 @@ import { CaseRow } from '../components/case'
 
 type Filter = 'todos' | 'pendiente' | 'evaluado'
 
+/** Residente: sus casos. Adscrito: los casos que él evaluó. */
 export default function CasesList() {
   const { user, cases } = useStore()
+  const me = user!
+  const isResident = me.role === 'residente'
   const [filter, setFilter] = useState<Filter>('todos')
   const [limit, setLimit] = useState(40)
-  const mine = useMemo(() => casesOf(cases, user!.id).reverse(), [cases, user])
-  const shown = mine.filter((c) => filter === 'todos' || c.status === filter)
 
-  // Agrupar por mes
+  const list = useMemo(() => {
+    const l = isResident ? casesOf(cases, me.id) : cases.filter((c) => c.evaluation?.attendingId === me.id)
+    return [...l].reverse()
+  }, [cases, me, isResident])
+  const shown = list.filter((c) => !isResident || filter === 'todos' || c.status === filter)
+
   const groups: { key: string; label: string; items: typeof shown }[] = []
   shown.slice(0, limit).forEach((c) => {
     const key = c.date.slice(0, 7)
@@ -27,24 +33,26 @@ export default function CasesList() {
 
   return (
     <>
-      <TopBar title="Mis casos" sub={`${mine.length} registrados`} />
+      <TopBar title={isResident ? 'Mis casos' : 'Casos que evalué'} sub={`${list.length} en total`} />
       <div className="screen">
-        <div className="segmented-tabs">
-          {(
-            [
-              ['todos', 'Todos'],
-              ['pendiente', 'Pendientes'],
-              ['evaluado', 'Evaluados'],
-            ] as const
-          ).map(([k, l]) => (
-            <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>
-              {l}
-            </button>
-          ))}
-        </div>
+        {isResident && (
+          <div className="segmented-tabs">
+            {(
+              [
+                ['todos', 'Todos'],
+                ['pendiente', 'Pendientes'],
+                ['evaluado', 'Evaluados'],
+              ] as const
+            ).map(([k, l]) => (
+              <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
         {!shown.length && (
           <div className="mt16">
-            <Empty icon={<ClipboardList size={32} />} title="Nada por aquí" text="Cuando registres un caso aparecerá en esta lista." />
+            <Empty icon={<ClipboardList size={32} />} title="Nada por aquí" text={isResident ? 'Cuando registres un caso aparecerá en esta lista.' : 'Las evaluaciones que hagas aparecerán aquí.'} />
           </div>
         )}
         {groups.map((g) => (
@@ -54,7 +62,7 @@ export default function CasesList() {
             </div>
             <div className="list">
               {g.items.map((c) => (
-                <CaseRow key={c.id} c={c} to={`/r/caso/${c.id}`} />
+                <CaseRow key={c.id} c={c} to={isResident ? `/r/caso/${c.id}` : `/a/caso/${c.id}`} showResident={!isResident} />
               ))}
             </div>
           </div>

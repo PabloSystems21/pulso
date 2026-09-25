@@ -1,17 +1,36 @@
 import { useEffect, type ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Info, TrendingDown } from 'lucide-react'
 import { initials } from '../data/users'
 import type { Alert } from '../lib/stats'
 import type { CusumState } from '../lib/cusum'
 import { CUSUM_STATE_LABEL } from '../lib/cusum'
 
-export function TopBar({ title, sub, back, right }: { title: ReactNode; sub?: ReactNode; back?: boolean | string; right?: ReactNode }) {
+export function TopBar({
+  title,
+  sub,
+  back,
+  fallback = '/',
+  right,
+}: {
+  title: ReactNode
+  sub?: ReactNode
+  back?: boolean | string
+  /** A dónde ir si ya no hay historial atrás (evita salirse de la app) */
+  fallback?: string
+  right?: ReactNode
+}) {
   const nav = useNavigate()
+  const loc = useLocation()
+  const goBack = () => {
+    if (typeof back === 'string') nav(back)
+    else if (loc.key === 'default') nav(fallback, { replace: true })
+    else nav(-1)
+  }
   return (
     <header className="topbar">
       {back && (
-        <button className="icon-btn" aria-label="Regresar" onClick={() => (typeof back === 'string' ? nav(back) : nav(-1))}>
+        <button className="icon-btn" aria-label="Regresar" onClick={goBack}>
           <ChevronLeft size={20} />
         </button>
       )}
@@ -39,7 +58,7 @@ export interface TabItem {
 
 export function TabBar({ items }: { items: TabItem[] }) {
   return (
-    <nav className="tabbar fixed-bottom">
+    <nav className="tabbar fixed-bottom" style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
       {items.map((t) => (
         <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => `tab${isActive && !t.fab ? ' active' : ''}`}>
           {t.fab ? <span className="tab-fab">{t.icon}</span> : t.icon}
@@ -165,7 +184,7 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
 }
 
 export function AlertCard({ alert, who, onClick }: { alert: Alert; who?: string; onClick?: () => void }) {
-  const Icon = alert.level === 'critical' ? TrendingDown : alert.level === 'warning' ? AlertTriangle : Info
+  const Icon = alert.kind === 'cusum' ? TrendingDown : alert.level === 'info' ? Info : AlertTriangle
   const color = alert.level === 'critical' ? 'var(--crit)' : alert.level === 'warning' ? '#c98500' : 'var(--series-1)'
   return (
     <button type="button" className={`alert ${alert.level}`} style={{ border: 0, borderLeft: `4px solid ${color}`, width: '100%', textAlign: 'left' }} onClick={onClick}>

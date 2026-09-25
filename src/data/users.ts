@@ -16,23 +16,35 @@ export function residencyStart(grade: Grade, now = new Date()): Date {
 
 const gs = academicYearStart().toISOString()
 
+/**
+ * El id ES el código de empleado (adscritos) o la matrícula (residentes):
+ * con ese código inician sesión. Ningún código se repite y no hay cambios de rol:
+ * si alguien cambia de puesto se crea un usuario nuevo y el anterior se conserva.
+ */
 export const USERS: User[] = [
-  { id: 'fgonzalez', name: 'Felipe González', short: 'Dr. Felipe González', role: 'adscrito', teachingTeam: true, title: 'Profesor titular · Anestesiología' },
-  { id: 'mortiz', name: 'Mariana Ortiz', short: 'Dra. Mariana Ortiz', role: 'adscrito', title: 'Adscrita · Anestesia obstétrica' },
-  { id: 'lherrera', name: 'Luis Herrera', short: 'Dr. Luis Herrera', role: 'adscrito', title: 'Adscrito · Anestesia regional' },
-  { id: 'atrevino', name: 'Ana Sofía Treviño', short: 'Dra. Ana Sofía Treviño', role: 'adscrito', teachingTeam: true, title: 'Profesora adjunta · Vía aérea' },
+  { id: '10482', name: 'Felipe González', short: 'Dr. Felipe González', role: 'adscrito', profesor: true, title: 'Profesor titular · Anestesiología' },
+  { id: '10517', name: 'Ana Sofía Treviño', short: 'Dra. Ana Sofía Treviño', role: 'adscrito', profesor: true, title: 'Profesora adjunta · Vía aérea' },
+  { id: '10603', name: 'Mariana Ortiz', short: 'Dra. Mariana Ortiz', role: 'adscrito', profesor: true, title: 'Profesora · Anestesia obstétrica' },
+  { id: '10744', name: 'Luis Herrera', short: 'Dr. Luis Herrera', role: 'adscrito', profesor: true, title: 'Profesor · Anestesia regional' },
+  { id: '10896', name: 'Raúl Vega', short: 'Dr. Raúl Vega', role: 'adscrito', title: 'Adscrito · Anestesia cardiovascular' },
+  { id: '10921', name: 'Paula Ibarra', short: 'Dra. Paula Ibarra', role: 'adscrito', title: 'Adscrita · Anestesia pediátrica' },
 
-  { id: 'prodriguez', name: 'Pablo Rodríguez', short: 'Pablo Rodríguez', role: 'residente', grade: 'R1', gradeStart: gs },
-  { id: 'dcruz', name: 'Daniela Cruz', short: 'Daniela Cruz', role: 'residente', grade: 'R1', gradeStart: gs },
-  { id: 'jsalinas', name: 'Jorge Salinas', short: 'Jorge Salinas', role: 'residente', grade: 'R2', gradeStart: gs },
-  { id: 'vmendoza', name: 'Valeria Mendoza', short: 'Valeria Mendoza', role: 'residente', grade: 'R2', gradeStart: gs },
-  { id: 'afuentes', name: 'Andrés Fuentes', short: 'Andrés Fuentes', role: 'residente', grade: 'R3', gradeStart: gs },
-  { id: 'rlara', name: 'Regina Lara', short: 'Regina Lara', role: 'residente', grade: 'R3', gradeStart: gs },
+  { id: '26104', name: 'Pablo Rodríguez', short: 'Pablo Rodríguez', role: 'residente', grade: 'R1', gradeStart: gs },
+  { id: '26118', name: 'Daniela Cruz', short: 'Daniela Cruz', role: 'residente', grade: 'R1', gradeStart: gs },
+  { id: '25073', name: 'Jorge Salinas', short: 'Jorge Salinas', role: 'residente', grade: 'R2', gradeStart: gs },
+  { id: '25089', name: 'Valeria Mendoza', short: 'Valeria Mendoza', role: 'residente', grade: 'R2', gradeStart: gs },
+  { id: '24035', name: 'Andrés Fuentes', short: 'Andrés Fuentes', role: 'residente', grade: 'R3', gradeStart: gs },
+  { id: '24042', name: 'Regina Lara', short: 'Regina Lara', role: 'residente', grade: 'R3', gradeStart: gs },
 ]
 
 export const userById = (id: string) => USERS.find((u) => u.id === id)!
+export const findUser = (id: string) => USERS.find((u) => u.id === id)
 export const ATTENDINGS = USERS.filter((u) => u.role === 'adscrito')
+export const PROFESORES = USERS.filter((u) => u.profesor)
 export const RESIDENTS = USERS.filter((u) => u.role === 'residente')
+
+/** Contraseña genérica de primer acceso: la reparte el administrador junto con el código. */
+export const initialPassword = (u: User) => `Anes.${u.id}`
 
 export const initials = (name: string) =>
   name

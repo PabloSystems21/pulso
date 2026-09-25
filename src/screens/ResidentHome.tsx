@@ -1,31 +1,31 @@
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ChevronRight, Plus, Sparkles } from 'lucide-react'
+import { ChevronRight, KeyRound, Plus, Sparkles } from 'lucide-react'
 import { useStore } from '../store'
-import { avg, casesOf, evaluatedOf, procedureSummaries, residentAlerts, rolling } from '../lib/stats'
+import { avg, caseSupervision, casesOf, chartCases, procedureCount, procedureSummaries, rolling } from '../lib/stats'
 import { cap, fmtDateLong, fmtRelative, todayISO } from '../lib/dates'
 import { userById } from '../data/users'
-import { AlertCard, Avatar, Kpi } from '../components/ui'
+import { Avatar, Kpi } from '../components/ui'
 import { CaseRow, SupervisionBadge } from '../components/case'
 import { Sparkline } from '../components/charts'
 
 export default function ResidentHome() {
-  const { user, cases } = useStore()
+  const { user, cases, accountOf } = useStore()
   const nav = useNavigate()
   const me = user!
   const mine = useMemo(() => casesOf(cases, me.id), [cases, me.id])
-  const evals = evaluatedOf(mine)
+  const evals = useMemo(() => chartCases(mine), [mine])
   const pending = mine.filter((c) => c.status === 'pendiente').reverse()
-  const alerts = useMemo(() => residentAlerts(me, mine, '/r'), [me, mine])
   const procs = useMemo(() => procedureSummaries(mine), [mine])
   const last = evals[evals.length - 1]
-  const last10 = avg(evals.slice(-10).map((c) => c.evaluation.supervision))
-  const first10 = avg(evals.slice(0, 10).map((c) => c.evaluation.supervision))
+  const last10 = avg(evals.slice(-10).map((c) => caseSupervision(c.evaluation)))
+  const first10 = avg(evals.slice(0, 10).map((c) => caseSupervision(c.evaluation)))
   const month = todayISO().slice(0, 7)
-  const thisMonth = mine.filter((c) => c.date.startsWith(month)).length
+  const monthCases = mine.filter((c) => c.date.startsWith(month))
   const competent = procs.filter((p) => p.cusum.state === 'competente').length
-  const trend = rolling(evals.map((c) => c.evaluation.supervision), 8).slice(-40)
+  const trend = rolling(evals.map((c) => caseSupervision(c.evaluation) ?? 0), 8).slice(-40)
   const delta = last10 !== null && first10 !== null ? last10 - first10 : null
+  const mustChangePassword = !accountOf(me.id).changed
 
   return (
     <>
@@ -40,11 +40,24 @@ export default function ResidentHome() {
       </header>
 
       <div className="screen">
+        {mustChangePassword && (
+          <Link to="/r/perfil" className="alert" style={{ borderLeftColor: 'var(--warn)', marginBottom: 12 }}>
+            <span className="ico" style={{ color: '#c98500' }}>
+              <KeyRound size={18} />
+            </span>
+            <span className="grow">
+              <span className="t">Cambia tu contraseña</span>
+              <span className="d">Sigues usando la contraseña genérica que te dieron.</span>
+            </span>
+            <ChevronRight size={18} className="muted" />
+          </Link>
+        )}
+
         <button className="hero-card row" style={{ width: '100%', border: 0, textAlign: 'left' }} onClick={() => nav('/r/nuevo')}>
           <div className="grow">
             <div className="muted small bold">¿Terminaste un caso?</div>
             <div style={{ fontSize: 20, fontWeight: 800, marginTop: 2 }}>Regístralo en 1 minuto</div>
-            <div className="muted small mt8">Contexto, procedimientos y listo. Tu adscrito lo evalúa.</div>
+            <div className="muted small mt8">Tu registro es tu autoevaluación; tu adscrito la califica después.</div>
           </div>
           <span className="tab-fab" style={{ background: 'var(--accent)', marginTop: 0 }}>
             <Plus size={26} />
@@ -75,13 +88,13 @@ export default function ResidentHome() {
                 <Avatar name={userById(last.evaluation.attendingId).name} att />
                 <div className="grow">
                   <div className="bold">{userById(last.evaluation.attendingId).short}</div>
-                  <div className="tiny muted">
-                    {last.surgery} · {fmtRelative(last.date)}
-                  </div>
+                  <div className="tiny muted">{fmtRelative(last.date)}</div>
                 </div>
               </div>
-              <div className="mt12">
-                <SupervisionBadge v={last.evaluation.supervision} />
+              <div className="row wrap mt12" style={{ gap: 6 }}>
+                {last.procedures.map((p) => (
+                  <SupervisionBadge key={p.id} v={last.evaluation.supervision[p.id]} />
+                ))}
               </div>
               <div className="feedback-quote mt12">
                 <div className="tiny muted bold">LO MEJOR</div>
@@ -103,13 +116,13 @@ export default function ResidentHome() {
         </div>
         <div className="grid2">
           <Kpi
-            label="Supervisión (últ. 10)"
+            label="O-SCORE (últ. 10)"
             value={last10?.toFixed(1) ?? '—'}
             delta={delta !== null ? `${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)} desde tus primeros casos` : undefined}
             good={(delta ?? 0) >= 0}
           />
-          <Kpi label="Casos este mes" value={thisMonth} hint={`${mine.length} en total`} />
-          <Kpi label="Procedimientos" value={procs.reduce((s, p) => s + p.exposure, 0)} hint="como primer operador o parcial" />
+          <Kpi label="Procedimientos este mes" value={procedureCount(monthCases)} hint={`${procedureCount(mine)} en total`} />
+          <Kpi label="Casos este mes" value={monthCases.length} hint={`${mine.length} en total`} />
           <Kpi label="Competencias CUSUM" value={`${competent}/${procs.filter((p) => p.exposure).length}`} hint="procedimientos con curva aceptable" />
         </div>
         <Link to="/r/progreso" className="card card-link row mt12">
@@ -121,17 +134,6 @@ export default function ResidentHome() {
           <Sparkline values={trend} />
           <ChevronRight size={18} className="muted" />
         </Link>
-
-        {alerts.length > 0 && (
-          <>
-            <div className="h2">Para tener en cuenta</div>
-            <div className="stack">
-              {alerts.slice(0, 3).map((a, i) => (
-                <AlertCard key={i} alert={a} onClick={a.to ? () => nav(a.to!) : undefined} />
-              ))}
-            </div>
-          </>
-        )}
       </div>
     </>
   )

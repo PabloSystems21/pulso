@@ -7,7 +7,7 @@ import { procDef } from '../data/catalog'
 import { fmtDuration } from '../lib/dates'
 import { casesOf, procedureSummaries } from '../lib/stats'
 import { Avatar, CusumBadge } from '../components/ui'
-import { SupervisionBadge } from '../components/case'
+import { SupervisionBadge, caseTitle } from '../components/case'
 
 export default function Evaluated() {
   const { id } = useParams()
@@ -36,9 +36,14 @@ export default function Evaluated() {
       )}
 
       <div className="card mt24" style={{ width: '100%', textAlign: 'left' }}>
-        <div className="bold">{c.surgery}</div>
-        <div className="mt8">
-          <SupervisionBadge v={c.evaluation.supervision} />
+        <div className="bold">{caseTitle(c)}</div>
+        <div className="stack mt8">
+          {c.procedures.map((p) => (
+            <div key={p.id} className="row between">
+              <span className="small ellipsis">{procDef(p.type).short}</span>
+              <SupervisionBadge v={c.evaluation!.supervision[p.id]} />
+            </div>
+          ))}
         </div>
         {types.length > 0 && (
           <div className="stack mt12" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
@@ -57,6 +62,7 @@ export default function Evaluated() {
             })}
           </div>
         )}
+        {c.evaluation.needsProfessorReview && <div className="badge warn mt12">Marcado para revisión de un profesor</div>}
       </div>
 
       <div className="stack mt16" style={{ width: '100%' }}>
@@ -69,19 +75,17 @@ export default function Evaluated() {
             Volver al inicio
           </Link>
         )}
-        <Link to={`/a/residente/${resident.id}`} className="btn block">
-          Ver progreso de {resident.name.split(' ')[0]}
-        </Link>
+        {user!.profesor && (
+          <Link to={`/a/residente/${resident.id}`} className="btn block">
+            Ver progreso de {resident.name.split(' ')[0]}
+          </Link>
+        )}
       </div>
 
       <div className="card flat mt24" style={{ width: '100%', textAlign: 'left', borderStyle: 'dashed' }}>
         <span className="demo-pill">Demo</span>
         <div className="small ink2 mt8">Mira lo que recibe el residente:</div>
-        <button
-          className="list-row"
-          style={{ padding: '10px 0 0' }}
-          onClick={() => switchTo(resident.id, `/r/caso/${c.id}`)}
-        >
+        <button className="list-row" style={{ padding: '10px 0 0' }} onClick={() => switchTo(resident.id, `/r/caso/${c.id}`)}>
           <Avatar name={resident.name} />
           <span className="grow bold">Entrar como {resident.short}</span>
           <ArrowRight size={18} />
