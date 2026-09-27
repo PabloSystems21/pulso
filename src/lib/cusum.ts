@@ -1,5 +1,5 @@
 import type { ProcedureDef } from '../data/catalog'
-import type { ProcedureRecord } from '../types'
+import type { Grade, ProcedureRecord } from '../types'
 
 /**
  * CUSUM de aprendizaje (Kestin 1995 / Bolsin & Colson 2000).
@@ -26,12 +26,36 @@ export function cusumParams(def: Pick<ProcedureDef, 'p0' | 'p1'>): CusumParams {
   return { s, h1: a / (P + Q), h0: -b / (P + Q) }
 }
 
-/** Falla para la curva = no se logró, o excedió intentos, o requirió relevo. */
-export function isCusumFailure(p: ProcedureRecord, def: ProcedureDef) {
-  return !p.success || p.attempts > def.maxAttempts || p.help >= 3
+/**
+ * Éxito = lo hizo el residente, en máx. 2 intentos, SIN que el adscrito tome el control y con el
+ * resultado esperado. La tolerancia cambia por grado:
+ *  - R1: se entiende que tome más de 2 intentos, más de 10 min o que necesite ayuda. Solo es falla
+ *    si no lo logró o si el adscrito tomó el control (relevo, o O-SCORE 1 "lo tuve que hacer yo").
+ *  - R2 y R3: además debe ser en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales.
+ * POR CONFIRMAR: si una complicación con el procedimiento logrado cuenta como falla (hoy no).
+ */
+export function isCusumFailure(p: ProcedureRecord, def: ProcedureDef, grade: Grade, oscore?: number) {
+  if (!p.success) return true
+  if (p.help >= 3 || oscore === 1) return true // el adscrito tomó el control
+  if (grade === 'R1') return false
+  return p.attempts > def.maxAttempts || p.time === '>10' || p.help >= 2
 }
 
-export const CUSUM_RULE = 'Éxito = se logró, ≤ 2 intentos y sin relevo del adscrito'
+export const CUSUM_RULE: Record<Grade, string> = {
+  R1: 'Éxito (R1) = lo logró sin que el adscrito tomara el control; se toleran más intentos, tiempo y ayuda',
+  R2: 'Éxito (R2) = lo logró en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales',
+  R3: 'Éxito (R3) = lo logró en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales',
+}
+
+/** Qué entra a la curva: solo como primer operador y solo si hubo un adscrito que lo supervisó */
+export interface CusumItem {
+  date: string
+  caseId: string
+  grade: Grade
+  proc: ProcedureRecord
+  /** O-SCORE que puso el adscrito (si ya evaluó) */
+  oscore?: number
+}
 
 export interface CusumPoint {
   n: number
@@ -39,6 +63,7 @@ export interface CusumPoint {
   fail: boolean
   date: string
   caseId: string
+  grade: Grade
 }
 
 export type CusumState = 'sin-datos' | 'curva' | 'competente' | 'alerta'
@@ -55,10 +80,7 @@ export interface CusumResult extends CusumParams {
   monitor: number
 }
 
-export function computeCusum(
-  items: { date: string; caseId: string; proc: ProcedureRecord }[],
-  def: ProcedureDef,
-): CusumResult {
+export function computeCusum(items: CusumItem[], def: ProcedureDef): CusumResult {
   const params = cusumParams(def)
   const points: CusumPoint[] = []
   let value = 0
@@ -68,7 +90,7 @@ export function computeCusum(
   let lastCross: CusumResult['lastCross']
 
   items.forEach((it, i) => {
-    const fail = isCusumFailure(it.proc, def)
+    const fail = isCusumFailure(it.proc, def, it.grade, it.oscore)
     const step = fail ? 1 - params.s : -params.s
     const prev = value
     value += step
@@ -80,7 +102,7 @@ export function computeCusum(
       if (competentAt === undefined) competentAt = n
     }
     if (prev < params.h1 && value >= params.h1) lastCross = { kind: 'inaceptable', n, date: it.date }
-    points.push({ n, value, fail, date: it.date, caseId: it.caseId })
+    points.push({ n, value, fail, date: it.date, caseId: it.caseId, grade: it.grade })
   })
 
   const n = items.length

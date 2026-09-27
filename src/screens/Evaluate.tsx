@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
-import { Check, ShieldAlert, Timer } from 'lucide-react'
+import { Check, Pencil, ShieldAlert, Timer } from 'lucide-react'
 import { useStore } from '../store'
 import type { Evaluation, ProcedureRecord, Score4, Score5 } from '../types'
 import {
@@ -98,7 +98,27 @@ function Suggest({ options, onPick }: { options: string[]; onPick: (s: string) =
   )
 }
 
-type StepKind = 'caso' | 'oscore' | 'entrust' | 'ants' | 'cex' | 'retro' | 'cierre'
+function ReviewRow({ label, value, onEdit }: { label: string; value: string; onEdit: () => void }) {
+  return (
+    <button type="button" className="list-row" onClick={onEdit}>
+      <span className="grow" style={{ minWidth: 0 }}>
+        <div className="tiny muted bold">{label}</div>
+        <div className="small">{value}</div>
+      </span>
+      <Pencil size={14} className="muted" />
+    </button>
+  )
+}
+
+/** "3.2 promedio · 1 no observado" */
+function scoreSummary(items: Item[], v: Record<string, number | null | undefined>) {
+  const vals = items.map((i) => v[i.id]).filter((x): x is number => typeof x === 'number')
+  const no = items.length - vals.length
+  const mean = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—'
+  return `${mean} promedio${no ? ` · ${no} no observado${no > 1 ? 's' : ''}` : ''}`
+}
+
+type StepKind = 'caso' | 'oscore' | 'entrust' | 'ants' | 'cex' | 'retro' | 'cierre' | 'revisar'
 
 export default function Evaluate() {
   const { id } = useParams()
@@ -129,12 +149,13 @@ export default function Evaluate() {
       { key: 'cex', name: 'Mini-CEX', kind: 'cex' as StepKind, proc: undefined },
       { key: 'retro', name: 'Retroalimentación', kind: 'retro' as StepKind, proc: undefined },
       { key: 'cierre', name: 'Cierre', kind: 'cierre' as StepKind, proc: undefined },
+      { key: 'revisar', name: 'Revisa antes de enviar', kind: 'revisar' as StepKind, proc: undefined },
     ]
   }, [c])
 
   if (!c) return null
-  // Solo evalúa el adscrito asignado; los casos sin adscrito los toma cualquier profesor
-  if (c.attendingId && c.attendingId !== user!.id && !user!.profesor) return <Navigate to="/a" replace />
+  // Solo evalúa el adscrito asignado. Los casos sin adscrito no se evalúan (solo generan alerta).
+  if (!c.attendingId || c.attendingId !== user!.id) return <Navigate to={`/a/caso/${c.id}`} replace />
   if (c.status === 'evaluado') return submitted.current ? null : <Navigate to={`/a/caso/${c.id}`} replace />
 
   const resident = userById(c.residentId)
@@ -153,7 +174,10 @@ export default function Evaluate() {
               ? allAnswered(MINICEX_ITEMS, miniCex)
               : cur.kind === 'retro'
                 ? best.trim().length > 2 && improve.trim().length > 2
-                : needsReview !== undefined && risk !== undefined && (!risk || riskNote.trim().length > 3)
+                : cur.kind === 'cierre'
+                  ? needsReview !== undefined && risk !== undefined && (!risk || riskNote.trim().length > 3)
+                  : true
+  const goTo = (key: string) => setStep(steps.findIndex((s) => s.key === key))
 
   const advance = () => setStep((s) => Math.min(s + 1, steps.length - 1))
   const autoNext = () => setTimeout(advance, 220)
@@ -266,7 +290,7 @@ export default function Evaluate() {
                 <div className="stack">
                   {c.procedures.map((p) => (
                     <div key={p.id} className="card tight">
-                      <ProcLine p={p} />
+                      <ProcLine p={p} c={c} />
                       {p.notes && <div className="small ink2 mt8">{p.notes}</div>}
                     </div>
                   ))}
@@ -359,7 +383,10 @@ export default function Evaluate() {
             <div className="q-title">Cierre</div>
             <div className="field-label">¿Este caso amerita revisión de un profesor?</div>
             <YesNo neutral value={needsReview} onPick={setNeedsReview} />
-            {needsReview && <div className="tiny muted mt8">El caso quedará marcado hasta que un profesor lo valide.</div>}
+            <div className="tiny muted mt8">
+              Úsalo si este caso no debería contar para su progresión (falla de equipo, cambio de turno, situación muy particular…).
+              {needsReview && ' Queda fuera de sus gráficas y de la CUSUM hasta que un profesor decida si se incluye.'}
+            </div>
             <div className="field-label">¿Hubo riesgo para el paciente atribuible al desempeño del residente?</div>
             <YesNo neutral value={risk} onPick={setRisk} />
             {risk && (
@@ -373,6 +400,26 @@ export default function Evaluate() {
             )}
           </div>
         )}
+
+        {cur.kind === 'revisar' && (
+          <div className="question">
+            <div className="q-title">Revisa antes de enviar</div>
+            <div className="q-hint">Una vez enviada, la evaluación ya no se puede modificar. Toca una sección para corregirla.</div>
+            <div className="list">
+              {c.procedures.map((p) => (
+                <ReviewRow key={p.id} label={`O-SCORE · ${procLabel(p)}`} value={`${supervision[p.id]} · ${SUPERVISION[supervision[p.id]! - 1].short}`} onEdit={() => goTo(`o-${p.id}`)} />
+              ))}
+              <ReviewRow label="Entrustment del caso" value={`${entrustment} · ${ENTRUSTMENT[entrustment! - 1].short}`} onEdit={() => goTo('entrust')} />
+              <ReviewRow label="ANTS" value={scoreSummary(ANTS_ITEMS, ants)} onEdit={() => goTo('ants')} />
+              <ReviewRow label="Mini-CEX" value={scoreSummary(MINICEX_ITEMS, miniCex)} onEdit={() => goTo('cex')} />
+              <ReviewRow label="Lo mejor" value={best} onEdit={() => goTo('retro')} />
+              <ReviewRow label="Prioridad de mejora" value={improve} onEdit={() => goTo('retro')} />
+              {comments.trim() && <ReviewRow label="Comentarios" value={comments} onEdit={() => goTo('retro')} />}
+              <ReviewRow label="¿Amerita revisión de un profesor?" value={needsReview ? 'Sí' : 'No'} onEdit={() => goTo('cierre')} />
+              <ReviewRow label="Riesgo para el paciente" value={risk ? `Sí · ${riskNote}` : 'No'} onEdit={() => goTo('cierre')} />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="fixed-bottom footer-bar">
@@ -381,10 +428,12 @@ export default function Evaluate() {
             Atrás
           </button>
         )}
-        <button className="btn primary grow" disabled={!valid} onClick={cur.kind === 'cierre' ? submit : advance}>
+        <button className="btn primary grow" disabled={!valid} onClick={cur.kind === 'revisar' ? submit : advance}>
           {cur.kind === 'caso' ? (
             'Comenzar evaluación'
           ) : cur.kind === 'cierre' ? (
+            'Revisar antes de enviar'
+          ) : cur.kind === 'revisar' ? (
             <>
               <Check size={18} /> Enviar evaluación
             </>

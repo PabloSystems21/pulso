@@ -1,10 +1,10 @@
 import type { AnesthesiaType, Area, Asa, AttemptTime, Grade, HelpLevel, ProcedureType, Shift } from '../types'
 
 /**
- * Si un caso marcado "amerita revisión de un profesor" debe quedar FUERA de las
- * gráficas hasta que el profesor lo valide, cambia esto a true. (Decisión pendiente.)
+ * Un caso marcado "amerita revisión de un profesor" queda FUERA de las gráficas y de la
+ * CUSUM hasta que un profesor decida incluirlo ("no todo cuenta para la progresión").
  */
-export const EXCLUDE_UNDER_REVIEW = false
+export const EXCLUDE_UNDER_REVIEW = true
 
 // ───────────────────────── Contexto del caso ─────────────────────────
 
@@ -17,7 +17,7 @@ export const AREA_LABEL = Object.fromEntries(AREAS.map((a) => [a.id, a.label])) 
 
 export const SHIFTS: { id: Shift; label: string; hint: string }[] = [
   { id: 'ordinaria', label: 'Ordinaria', hint: 'Matutino' },
-  { id: 'guardia', label: 'Guardia', hint: 'Complementaria o vespertino' },
+  { id: 'complementaria', label: 'Complementaria', hint: 'Vespertino o guardia' },
 ]
 export const SHIFT_LABEL = Object.fromEntries(SHIFTS.map((s) => [s.id, s.label])) as Record<Shift, string>
 
@@ -46,18 +46,20 @@ export interface ProcedureDef {
   maxAttempts: number
   /** Pide "¿cuál?" en texto libre */
   needsLabel?: boolean
+  /** Técnica de mayor riesgo: al R1 se le pide un umbral de O-SCORE menor (2–3) */
+  highRisk?: boolean
 }
 
 export const PROCEDURES: ProcedureDef[] = [
   { id: 'laringoscopia', label: 'Laringoscopia directa', short: 'Laringoscopia', p0: 0.1, p1: 0.2, maxAttempts: 2 },
   { id: 'mascarilla', label: 'Ventilación con mascarilla', short: 'Mascarilla', p0: 0.05, p1: 0.15, maxAttempts: 2 },
   { id: 'videolaringo', label: 'Videolaringoscopia', short: 'Videolaringo', p0: 0.1, p1: 0.2, maxAttempts: 2 },
-  { id: 'fibroscopio', label: 'Fibroscopio', short: 'Fibroscopio', p0: 0.2, p1: 0.4, maxAttempts: 2 },
+  { id: 'fibroscopio', label: 'Fibroscopio', short: 'Fibroscopio', p0: 0.2, p1: 0.4, maxAttempts: 2, highRisk: true },
   { id: 'espinal', label: 'Bloqueo espinal', short: 'Espinal', p0: 0.1, p1: 0.2, maxAttempts: 2 },
   { id: 'epidural', label: 'Epidural', short: 'Epidural', p0: 0.1, p1: 0.25, maxAttempts: 2 },
   { id: 'mixto', label: 'Bloqueo mixto', short: 'Mixto', p0: 0.1, p1: 0.25, maxAttempts: 2 },
-  { id: 'arterial', label: 'Acceso arterial', short: 'Línea arterial', p0: 0.15, p1: 0.3, maxAttempts: 2 },
-  { id: 'cvc', label: 'Catéter venoso central', short: 'CVC', p0: 0.1, p1: 0.25, maxAttempts: 2 },
+  { id: 'arterial', label: 'Acceso arterial', short: 'Línea arterial', p0: 0.15, p1: 0.3, maxAttempts: 2, highRisk: true },
+  { id: 'cvc', label: 'Catéter venoso central', short: 'CVC', p0: 0.1, p1: 0.25, maxAttempts: 2, highRisk: true },
   { id: 'periferico', label: 'Bloqueo periférico', short: 'Bloqueo periférico', p0: 0.15, p1: 0.3, maxAttempts: 2, needsLabel: true },
   { id: 'otro', label: 'Otro', short: 'Otro', p0: 0.15, p1: 0.3, maxAttempts: 2, needsLabel: true },
 ]
@@ -187,15 +189,21 @@ export const GRADE_EXPECTATIONS: Record<Grade, string[]> = {
   R3: ['Autonomía supervisada', 'Manejo de casos complejos', 'Liderazgo', 'Enseñanza a R menores', 'Participación académica / investigación'],
 }
 
-/**
- * Banda esperada de O-SCORE (1–5) según grado y meses dentro del grado.
- * VALORES PROVISIONALES: los debe fijar el equipo de enseñanza.
- */
-export function expectedBand(grade: Grade, monthsIntoGrade: number): [number, number] {
-  const base = grade === 'R1' ? 1.6 : grade === 'R2' ? 2.6 : 3.4
-  const lo = base + Math.min(Math.max(monthsIntoGrade, 0), 12) / 12
-  return [lo, Math.min(lo + 1, 5)]
-}
+// Umbrales dictados por enseñanza. "Más de 3" se interpreta como ≥ 3 (las escalas son enteras).
 
-/** Umbral ANTS esperado (1–4) por grado — PROVISIONAL */
-export const ANTS_TARGET: Record<Grade, number> = { R1: 2.5, R2: 3, R3: 3.5 }
+/** O-SCORE mínimo esperado por procedimiento: R1 ≥ 3 · R2 y R3 ≥ 4 */
+export const OSCORE_TARGET: Record<Grade, number> = { R1: 3, R2: 4, R3: 4 }
+/** Técnicas de mayor riesgo (arterias, catéteres, intubación difícil): R1 entre 2 y 3 · R2 y R3 ≥ 4 */
+export const OSCORE_TARGET_HIGH_RISK: Record<Grade, number> = { R1: 2, R2: 4, R3: 4 }
+
+export const oscoreTarget = (grade: Grade, type?: ProcedureType) =>
+  type && procDef(type).highRisk ? OSCORE_TARGET_HIGH_RISK[grade] : OSCORE_TARGET[grade]
+
+/** ANTS: lo ideal es ≥ 3 en todos los dominios, en todos los grados */
+export const ANTS_TARGET: Record<Grade, number> = { R1: 3, R2: 3, R3: 3 }
+
+/**
+ * Entrustment esperado: el R1 llega a supervisión indirecta (3); R2 y R3, sin supervisión (4).
+ * POR CONFIRMAR: interpretación de la nota de enseñanza.
+ */
+export const ENTRUSTMENT_TARGET: Record<Grade, number> = { R1: 3, R2: 4, R3: 4 }

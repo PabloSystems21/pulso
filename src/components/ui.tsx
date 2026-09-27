@@ -183,6 +183,19 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
   )
 }
 
+/** Ventana centrada que obliga a responder: no se cierra tocando afuera ni con Escape */
+export function Modal({ open, children }: { open: boolean; children: ReactNode }) {
+  if (!open) return null
+  return (
+    <>
+      <div className="sheet-backdrop" />
+      <div className="modal" role="dialog" aria-modal="true">
+        {children}
+      </div>
+    </>
+  )
+}
+
 export function AlertCard({ alert, who, onClick }: { alert: Alert; who?: string; onClick?: () => void }) {
   const Icon = alert.kind === 'cusum' ? TrendingDown : alert.level === 'info' ? Info : AlertTriangle
   const color = alert.level === 'critical' ? 'var(--crit)' : alert.level === 'warning' ? '#c98500' : 'var(--series-1)'

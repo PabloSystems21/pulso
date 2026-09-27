@@ -13,7 +13,7 @@ import {
 } from '../data/catalog'
 import { userById } from '../data/users'
 import { fmtDateLong, fmtDuration } from '../lib/dates'
-import { procLabel } from '../lib/stats'
+import { isExcluded, procLabel } from '../lib/stats'
 import { Avatar, TopBar } from '../components/ui'
 import { ProcLine, caseTitle } from '../components/case'
 
@@ -60,7 +60,7 @@ export default function CaseDetail() {
   const isAtt = me.role === 'adscrito'
   const e = c.evaluation
   const evaluator = e ? userById(e.attendingId) : c.attendingId ? userById(c.attendingId) : null
-  const canEvaluate = isAtt && c.status === 'pendiente' && (c.attendingId === me.id || (!c.attendingId && me.profesor))
+  const canEvaluate = isAtt && c.status === 'pendiente' && c.attendingId === me.id
   const canReview = !!me.profesor && !!e?.needsProfessorReview && !c.professorReview
 
   const resolve = (include: boolean) =>
@@ -81,6 +81,8 @@ export default function CaseDetail() {
               <span className="badge warn">
                 <Clock size={11} /> Pendiente
               </span>
+            ) : c.status === 'no-evaluable' ? (
+              <span className="badge">No evaluable</span>
             ) : (
               <span className="badge good">Evaluado</span>
             )}
@@ -138,7 +140,7 @@ export default function CaseDetail() {
             <div className="stack mt16" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
               {c.procedures.map((p) => (
                 <div key={p.id}>
-                  <ProcLine p={p} score={e?.supervision[p.id]} />
+                  <ProcLine p={p} c={c} score={e?.supervision[p.id]} />
                   {p.notes && <div className="small ink2 mt8">{p.notes}</div>}
                   <Link
                     to={rid ? `/a/residente/${rid}/procedimiento/${p.type}` : isAtt ? `/a/residente/${c.residentId}/procedimiento/${p.type}` : `/r/procedimiento/${p.type}`}
@@ -154,7 +156,19 @@ export default function CaseDetail() {
         </div>
 
         {/* ───── Lo que puso quien evaluó ───── */}
-        {!e ? (
+        {c.status === 'no-evaluable' ? (
+          <>
+            <div className="h2">Evaluación</div>
+            <div className="card flat" style={{ background: 'var(--crit-soft)', border: 0 }}>
+              <div className="small bold" style={{ color: '#a32424' }}>
+                Este caso no se evalúa
+              </div>
+              <div className="small ink2" style={{ marginTop: 4 }}>
+                No hubo un adscrito que supervisara. Se notificó a todos los profesores y no suma a la curva CUSUM.
+              </div>
+            </div>
+          </>
+        ) : !e ? (
           <>
             <div className="h2">
               Evaluación
@@ -250,6 +264,13 @@ export default function CaseDetail() {
               </div>
             )}
 
+            {isExcluded(c) && !c.professorReview && (
+              <div className="card flat mt12" style={{ background: 'var(--warn-soft)', border: 0 }}>
+                <div className="small" style={{ color: 'var(--warn-ink)' }}>
+                  Fuera de las gráficas y de la CUSUM hasta que un profesor lo valide.
+                </div>
+              </div>
+            )}
             {c.professorReview && (
               <div className="card mt12">
                 <div className="tiny muted bold">REVISIÓN DEL PROFESOR</div>
@@ -261,7 +282,7 @@ export default function CaseDetail() {
             {canReview && (
               <div className="card mt12">
                 <div className="bold small">Este caso amerita tu revisión</div>
-                <div className="tiny muted mt8">Decide si cuenta para el progreso del residente.</div>
+                <div className="tiny muted mt8">Decide si cuenta para el progreso del residente (gráficas y CUSUM).</div>
                 <div className="row mt12">
                   <button className="btn block" onClick={() => resolve(false)}>
                     Excluir

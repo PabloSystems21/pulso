@@ -112,6 +112,17 @@ export function TrendChart({ points, yLabels, height = 190 }: { points: TrendPoi
 
 // ─────────────────────────── CUSUM ───────────────────────────
 
+/** Tramos consecutivos de intentos por grado */
+function gradeSpans(pts: CusumResult['points']) {
+  const out: { grade: string; from: number; to: number }[] = []
+  pts.forEach((p) => {
+    const last = out[out.length - 1]
+    if (last && last.grade === p.grade) last.to = p.n
+    else out.push({ grade: p.grade, from: p.n, to: p.n })
+  })
+  return out
+}
+
 export function CusumChart({ result, height = 220 }: { result: CusumResult; height?: number }) {
   const [ref, w] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -153,6 +164,15 @@ export function CusumChart({ result, height = 220 }: { result: CusumResult; heig
             {v}
           </text>
         ))}
+        {/* fondo por grado: qué intentos fueron de R1, R2 y R3 */}
+        {gradeSpans(pts).map((g, i) => (
+          <g key={g.grade}>
+            <rect x={X(g.from - 1)} width={Math.max(0, X(g.to) - X(g.from - 1))} y={m.t} height={ih} fill={i % 2 ? 'var(--series-1)' : 'transparent'} opacity={0.06} />
+            <text x={X(g.from - 1) + 4} y={m.t + 10} style={{ fontWeight: 700 }}>
+              {g.grade}
+            </text>
+          </g>
+        ))}
         {/* líneas de decisión */}
         <line x1={m.l} x2={m.l + iw} y1={Y(result.h1)} y2={Y(result.h1)} stroke="var(--crit)" strokeWidth={1.5} strokeDasharray="5 4" />
         <text x={m.l + iw} y={Y(result.h1) - 5} textAnchor="end" style={{ fill: '#a32424', fontWeight: 600 }}>
@@ -191,7 +211,7 @@ export function CusumChart({ result, height = 220 }: { result: CusumResult; heig
           <div className="bold">
             #{hp.n} · {fmtDate(hp.date)}
           </div>
-          {hp.fail ? 'Falla' : 'Éxito'} · CUSUM {hp.value.toFixed(2)}
+          {hp.grade} · {hp.fail ? 'Falla' : 'Éxito'} · CUSUM {hp.value.toFixed(2)}
         </div>
       )}
     </div>

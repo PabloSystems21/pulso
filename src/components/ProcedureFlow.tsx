@@ -2,9 +2,9 @@
 // "¿Lo lograste? Sí → ¿Al primer intento? No → ¿En cuál? 2º"
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Pencil } from 'lucide-react'
-import type { AttemptTime, HelpLevel, ProcedureRecord, ProcedureType, Role } from '../types'
+import type { AttemptTime, Grade, HelpLevel, ProcedureRecord, ProcedureType, Role } from '../types'
 import { ATTEMPT_TIMES, HELP, INCIDENTS, INCIDENT_OTHER, PROCEDURES, procDef } from '../data/catalog'
-import { isCusumFailure } from '../lib/cusum'
+import { CUSUM_RULE, isCusumFailure } from '../lib/cusum'
 import { newId } from '../store'
 import { ChoiceList, MultiChips, YesNo } from './ui'
 
@@ -72,12 +72,18 @@ function toRecord(d: Draft, id: string): ProcedureRecord {
 export function ProcedureFlow({
   initial,
   perspective,
+  grade,
+  noAttending,
   usedTypes = [],
   onDone,
   onCancel,
 }: {
   initial?: ProcedureRecord
   perspective: Role
+  /** La tolerancia de la CUSUM depende del grado */
+  grade: Grade
+  /** Sin adscrito el procedimiento no suma a la CUSUM */
+  noAttending?: boolean
   /** Un procedimiento no se puede repetir dentro del mismo caso */
   usedTypes?: ProcedureType[]
   onDone: (p: ProcedureRecord) => void
@@ -257,7 +263,8 @@ export function ProcedureFlow({
 
   const done = current === null
   const preview = done ? toRecord(d, initial?.id ?? 'x') : null
-  const fail = preview ? isCusumFailure(preview, procDef(preview.type)) : false
+  const fail = preview ? isCusumFailure(preview, procDef(preview.type), grade) : false
+  const counts = !!preview?.firstOperator && !noAttending
 
   return (
     <div>
@@ -283,14 +290,23 @@ export function ProcedureFlow({
 
       {done && preview && (
         <div className="question" ref={curRef}>
-          <div className="card flat mt12" style={{ background: fail ? 'var(--warn-soft)' : 'var(--good-soft)', border: 0 }}>
-            <div className="small bold" style={{ color: fail ? 'var(--warn-ink)' : 'var(--good-ink)' }}>
-              Para la curva CUSUM esto cuenta como {fail ? 'falla' : 'éxito'}
+          {counts ? (
+            <div className="card flat mt12" style={{ background: fail ? 'var(--warn-soft)' : 'var(--good-soft)', border: 0 }}>
+              <div className="small bold" style={{ color: fail ? 'var(--warn-ink)' : 'var(--good-ink)' }}>
+                Para la curva CUSUM esto cuenta como {fail ? 'falla' : 'éxito'}
+              </div>
+              <div className="tiny ink2" style={{ marginTop: 4 }}>
+                Se calcula solo. {CUSUM_RULE[grade]}.
+              </div>
             </div>
-            <div className="tiny ink2" style={{ marginTop: 4 }}>
-              Se calcula solo: éxito = se logró, ≤ 2 intentos y sin relevo.
+          ) : (
+            <div className="card flat mt12" style={{ border: 0, background: '#eef2f3' }}>
+              <div className="small bold">Este procedimiento no suma a la CUSUM</div>
+              <div className="tiny ink2" style={{ marginTop: 4 }}>
+                {noAttending ? 'No hubo un adscrito que lo supervisara y validara.' : 'Solo cuenta cuando fuiste primer operador.'}
+              </div>
             </div>
-          </div>
+          )}
           <div className="field-label">Observaciones (opcional)</div>
           <textarea className="textarea" placeholder="Ej. Cormack III, se usó bougie…" value={d.notes ?? ''} onChange={(e) => setD((x) => ({ ...x, notes: e.target.value }))} />
           <div className="row mt16">

@@ -18,7 +18,7 @@ import type {
 } from '../types'
 import { addDays, daysBetween, toISODate } from '../lib/dates'
 import { ANTS_ITEMS, MINICEX_ITEMS } from './catalog'
-import { ATTENDINGS, PROFESORES, RESIDENTS, residencyStart } from './users'
+import { ATTENDINGS, RESIDENTS, gradeForIngreso, residencyStart } from './users'
 
 type Rng = () => number
 
@@ -143,10 +143,6 @@ const RISK_NOTES = [
   'No verificó el equipo de vía aérea antes de iniciar.',
 ]
 
-function gradeAt(residencyStartDate: Date, date: Date): Grade {
-  const years = Math.floor(daysBetween(toISODate(residencyStartDate), toISODate(date)) / 365.25)
-  return (['R1', 'R2', 'R3'] as const)[clamp(years, 0, 2)]
-}
 
 interface Ctx {
   r: Rng
@@ -165,7 +161,8 @@ function makeProcedure(ctx: Ctx, type: ProcedureType): ProcedureRecord {
   const L = LEARN[type]
   const pEnd = L.pEnd * prof.talent
   let pFail = pEnd + (L.pStart - pEnd) * Math.exp(-k / L.K)
-  if (ctx.forceFail?.(type)) pFail = 0.85
+  const forced = !!ctx.forceFail?.(type)
+  if (forced) pFail = 0.85
   const firstOperator = !chance(r, 0.04)
   const fail = chance(r, pFail)
   let success = true
@@ -175,7 +172,8 @@ function makeProcedure(ctx: Ctx, type: ProcedureType): ProcedureRecord {
     help = 3
     attempts = pick(r, [1, 2] as const)
   } else if (fail) {
-    const kind = r()
+    // Las fallas forzadas son de las que no se toleran ni al R1: no lo logró o lo relevaron
+    const kind = forced ? (chance(r, 0.5) ? 0.1 : 0.9) : r()
     if (kind < 0.4) {
       success = false
       attempts = pick(r, [2, 3, 4] as const)
@@ -280,7 +278,7 @@ function buildSeed(): CaseRecord[] {
   RESIDENTS.forEach((res, ri) => {
     const r = mulberry32(1000 + ri * 7919)
     const prof = PROFILES[res.id]
-    const start = residencyStart(res.grade!, now)
+    const start = residencyStart(res)
     const counts: Ctx['counts'] = {}
     let idx = 0
     for (let d = new Date(start); d < today; d = addDays(d, 1)) {
@@ -294,7 +292,7 @@ function buildSeed(): CaseRecord[] {
       const guardia = weekend || chance(r, 0.12)
       for (let j = 0; j < nCases; j++) {
         const skill = prof.s0 + (prof.s1 - prof.s0) * (1 - Math.exp(-dayN / prof.tau))
-        const grade = gradeAt(start, d)
+        const grade = gradeForIngreso(res.ingreso!, d) ?? 'R3'
         const caseId = `${res.id}-${idx++}`
         // Daniela: racha reciente de problemas en bloqueo espinal (el "peor caso" del demo)
         const danielaStreak = res.id === '26118' && daysAgo <= 21
@@ -311,15 +309,15 @@ function buildSeed(): CaseRecord[] {
           R3: [[1, 12], [2, 33], [3, 33], [4, 15], [5, 5], [6, 2]],
         }
         const asa = weighted(r, asaW[grade])
-        const shift: Shift = guardia ? 'guardia' : 'ordinaria'
-        const urgency = chance(r, shift === 'guardia' ? 0.7 : 0.15) ? 'urgente' : 'electivo'
+        const shift: Shift = guardia ? 'complementaria' : 'ordinaria'
+        const urgency = chance(r, shift === 'complementaria' ? 0.7 : 0.15) ? 'urgente' : 'electivo'
         const comorbidities: string[] = []
         if (area === 'toco') comorbidities.push('Embarazo')
         if (chance(r, 0.2)) comorbidities.push('Obesidad')
         const vad = chance(r, asa >= 4 ? 0.18 : 0.06)
         if (vad) comorbidities.push('Vía aérea difícil prevista')
         if (area !== 'toco' && chance(r, 0.08)) comorbidities.push('Paciente pediátrico')
-        const criticalEvent = chance(r, asa >= 4 ? 0.22 : 0.08)
+        const criticalEvent = chance(r, asa >= 4 ? 0.12 : 0.03)
         const allowCvc = !(res.id === '26104' && (daysAgo < 41 || dayN < 50))
         const seq = { n: 0 }
         const ctx: Ctx = { r, prof, skill, counts, caseId, seq, forceFail: danielaStreak ? (t) => t === 'espinal' : undefined }
@@ -327,7 +325,7 @@ function buildSeed(): CaseRecord[] {
         // A veces no hubo adscrito presente: eso dispara alerta a todos los profesores
         const noAttending = chance(r, 0.022)
         const attendingId = noAttending ? null : weighted(r, ATTENDINGS.map((a) => [a.id, a.profesor ? 20 : 10] as [string, number]))
-        const hh = shift === 'guardia' ? 16 + Math.floor(r() * 7) : j === 0 ? 7 + Math.floor(r() * 2) : 11 + Math.floor(r() * 3)
+        const hh = shift === 'complementaria' ? 16 + Math.floor(r() * 7) : j === 0 ? 7 + Math.floor(r() * 2) : 11 + Math.floor(r() * 3)
         const level = skill <= 0.35 ? 'low' : skill >= 0.7 ? 'high' : 'mid'
         const c: CaseRecord = {
           id: caseId,
@@ -354,12 +352,12 @@ function buildSeed(): CaseRecord[] {
         }
         const penalty = asa >= 4 ? 0.6 : asa === 3 ? 0.25 : 0
         const espinalFail = danielaStreak && procedures.some((p) => p.type === 'espinal' && (!p.success || p.help >= 3))
-        // Los casos sin adscrito los termina revisando un profesor; los muy recientes quedan pendientes
-        const evaluator = noAttending ? pick(r, PROFESORES) : ATTENDINGS.find((a) => a.id === attendingId)!
-        if (noAttending && daysAgo <= 10) {
-          c.status = 'pendiente'
+        // Los casos sin adscrito generan alerta, pero no se evalúan
+        if (noAttending) {
+          c.status = 'no-evaluable'
         } else {
-          c.evaluation = makeEvaluation(r, c, evaluator, skill, penalty, espinalFail)
+          const evaluator = ATTENDINGS.find((a) => a.id === attendingId)!
+          c.evaluation = makeEvaluation(r, c, evaluator, skill, penalty, false)
           if (espinalFail) c.evaluation.improve = 'Revisar referencias anatómicas y posición antes de puncionar'
         }
         out.push(c)
@@ -444,6 +442,7 @@ function pendingCases(today: Date): CaseRecord[] {
       // Caso sin adscrito: alerta para TODOS los profesores
       ...base,
       id: 'pend-vmendoza-sin',
+      status: 'no-evaluable',
       residentId: '25089',
       attendingId: null,
       supervisionGap: 'residente-mayor',
@@ -451,7 +450,7 @@ function pendingCases(today: Date): CaseRecord[] {
       date: y,
       startTime: '22:40',
       area: 'toco',
-      shift: 'guardia',
+      shift: 'complementaria',
       grade: 'R2',
       urgency: 'urgente',
       asa: 2,

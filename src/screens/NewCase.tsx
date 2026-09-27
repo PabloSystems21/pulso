@@ -14,7 +14,7 @@ interface Form {
   date: string
   startTime: string
   area?: Area
-  shift: Shift
+  shift?: Shift
   attendingId?: string | null
   supervisionGap?: 'solo' | 'residente-mayor'
   urgency?: Urgency
@@ -29,12 +29,6 @@ interface Form {
   residentNote: string
 }
 
-function defaultTime() {
-  const d = new Date(Date.now() - 2 * 3600_000)
-  const h = Math.max(7, d.getHours())
-  return `${String(h).padStart(2, '0')}:${d.getMinutes() < 30 ? '00' : '30'}`
-}
-
 const STEPS = ['Identificación', 'El caso', 'Procedimientos', 'Enviar'] as const
 
 export default function NewCase() {
@@ -46,8 +40,8 @@ export default function NewCase() {
   const [proc, setProc] = useState<ProcedureRecord | 'new' | null>(null)
   const [f, setF] = useState<Form>(() => ({
     date: todayISO(),
-    startTime: defaultTime(),
-    shift: 'ordinaria',
+    // Hora y jornada las pone el residente (sin valor por defecto): se van a comparar guardias vs. ordinaria
+    startTime: '',
     comorbidities: [],
     usualForGrade: true,
     criticalEvent: false,
@@ -62,7 +56,7 @@ export default function NewCase() {
   const noAttending = f.attendingId === null
 
   const valid: Record<string, boolean> = {
-    Identificación: !!f.area && !!f.startTime && (!!f.attendingId || (noAttending && !!f.supervisionGap)),
+    Identificación: !!f.area && !!f.startTime && !!f.shift && (!!f.attendingId || (noAttending && !!f.supervisionGap)),
     'El caso': !!f.urgency && !!f.asa && !!f.anesthesia && f.usualForGrade !== undefined && f.criticalEvent !== undefined && (!f.criticalEvent || f.criticalEventNote.trim().length > 3),
     Procedimientos: true,
     Enviar: f.residentReflection.trim().length > 3,
@@ -78,7 +72,7 @@ export default function NewCase() {
       date: f.date,
       startTime: f.startTime,
       area: f.area!,
-      shift: f.shift,
+      shift: f.shift!,
       grade: me.grade!,
       urgency: f.urgency!,
       asa: f.asa!,
@@ -90,7 +84,8 @@ export default function NewCase() {
       procedures: f.procedures,
       residentReflection: f.residentReflection.trim(),
       residentNote: f.residentNote.trim() || undefined,
-      status: 'pendiente',
+      // Sin adscrito: se notifica a los profesores, pero no se evalúa ni suma a la CUSUM
+      status: noAttending ? 'no-evaluable' : 'pendiente',
     }
     saveCase(c)
     nav(`/r/enviado/${c.id}`, { replace: true, state: { secs: Math.round((Date.now() - startedAt.current) / 1000) } })
@@ -104,6 +99,8 @@ export default function NewCase() {
           <ProcedureFlow
             initial={proc === 'new' ? undefined : proc}
             perspective="residente"
+            grade={me.grade!}
+            noAttending={noAttending}
             usedTypes={f.procedures.map((p) => p.type)}
             onCancel={() => setProc(null)}
             onDone={(p) => {
@@ -144,6 +141,7 @@ export default function NewCase() {
               />
               <input type="time" className="input" style={{ width: 142, marginLeft: 'auto', padding: '13px 10px' }} value={f.startTime} onChange={(e) => up({ startTime: e.target.value })} aria-label="Hora de inicio" />
             </div>
+            <div className="tiny muted mt8">Pon la hora aproximada en que inició el caso, aunque lo registres después.</div>
             <div className="field-label">Área</div>
             <div className="choices">
               {AREAS.map((a) => (
@@ -152,7 +150,7 @@ export default function NewCase() {
                 </button>
               ))}
             </div>
-            <div className="field-label">Jornada</div>
+            <div className="field-label">¿Fue en jornada ordinaria o complementaria?</div>
             <div className="big-choices">
               {SHIFTS.map((s) => (
                 <button key={s.id} className={`big-choice${f.shift === s.id ? ' on' : ''}`} style={{ flexDirection: 'column', gap: 0, height: 72, fontSize: 16 }} onClick={() => up({ shift: s.id })}>
@@ -206,7 +204,7 @@ export default function NewCase() {
                     Este caso se notifica a todos los profesores
                   </div>
                   <div className="tiny ink2" style={{ marginTop: 4 }}>
-                    Por normativa, un caso sin supervisión representa un riesgo para el paciente y tiene que revisarse.
+                    Por normativa, un caso sin supervisión representa un riesgo para el paciente y tiene que revisarse. Este caso no se evalúa y no suma a tu curva CUSUM.
                   </div>
                 </div>
               </>
@@ -249,6 +247,7 @@ export default function NewCase() {
                   ¿Qué pasó? <span style={{ color: 'var(--crit)' }}>*</span>
                 </div>
                 <textarea className="textarea" autoFocus placeholder="Describe brevemente el evento y cómo se manejó" value={f.criticalEventNote} onChange={(e) => up({ criticalEventNote: e.target.value })} />
+                <div className="tiny muted mt8">Los eventos críticos se notifican a los profesores del programa.</div>
               </>
             )}
           </div>
@@ -261,7 +260,7 @@ export default function NewCase() {
             <div className="stack">
               {f.procedures.map((p) => (
                 <div key={p.id} className="card tight">
-                  <ProcLine p={p} />
+                  <ProcLine p={p} c={{ grade: me.grade!, attendingId: f.attendingId ?? null }} />
                   <div className="row mt8" style={{ justifyContent: 'flex-end' }}>
                     <button className="btn sm ghost" onClick={() => up({ procedures: f.procedures.filter((x) => x.id !== p.id) })}>
                       <Trash2 size={15} /> Quitar
@@ -297,7 +296,7 @@ export default function NewCase() {
               {f.procedures.length > 0 && (
                 <div className="stack mt12" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                   {f.procedures.map((p) => (
-                    <ProcLine key={p.id} p={p} compact />
+                    <ProcLine key={p.id} p={p} c={{ grade: me.grade!, attendingId: f.attendingId ?? null }} compact />
                   ))}
                 </div>
               )}
@@ -316,7 +315,7 @@ export default function NewCase() {
             <div className="card flat mt16 row" style={{ background: noAttending ? 'var(--crit-soft)' : 'var(--accent-soft)', border: 0 }}>
               {noAttending ? (
                 <div className="small">
-                  Al no haber adscrito, este caso se manda a <b>revisión de los profesores</b>.
+                  Al no haber adscrito, este caso se notifica a <b>los profesores</b>. No se evalúa y no suma a tu curva CUSUM.
                 </div>
               ) : (
                 <>

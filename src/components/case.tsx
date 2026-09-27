@@ -4,14 +4,18 @@ import type { CaseRecord, ProcedureRecord } from '../types'
 import { ANESTHESIA_LABEL, AREA_LABEL, ATTEMPT_TIMES, HELP, SUPERVISION, procDef } from '../data/catalog'
 import { userById } from '../data/users'
 import { fmtRelative } from '../lib/dates'
-import { caseSupervision, failsFor, procLabel } from '../lib/stats'
+import { caseSupervision, countsForCusum, failsFor, procLabel } from '../lib/stats'
 import { Avatar } from './ui'
 
 export const attemptText = (p: Pick<ProcedureRecord, 'success' | 'attempts'>) =>
   p.success ? (p.attempts === 1 ? 'Al 1er intento' : `Al ${p.attempts === 4 ? '4º+' : `${p.attempts}º`} intento`) : `No se logró (${p.attempts === 4 ? '4+' : p.attempts} int.)`
 
-export function ProcLine({ p, compact, score }: { p: ProcedureRecord; compact?: boolean; score?: number }) {
-  const fail = failsFor(p)
+/** Lo mínimo del caso para saber cómo cuenta un procedimiento en la CUSUM */
+export type ProcCtx = Pick<CaseRecord, 'grade' | 'attendingId' | 'evaluation' | 'professorReview'>
+
+export function ProcLine({ p, c, compact, score }: { p: ProcedureRecord; c: ProcCtx; compact?: boolean; score?: number }) {
+  const counts = countsForCusum(p, c as CaseRecord)
+  const fail = failsFor(p, c)
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <span style={{ color: p.success ? 'var(--good-ink)' : '#a32424', marginTop: 1 }}>{p.success ? <CheckCircle2 size={18} /> : <XCircle size={18} />}</span>
@@ -28,7 +32,14 @@ export function ProcLine({ p, compact, score }: { p: ProcedureRecord; compact?: 
         </div>
         {!compact && (
           <div className="row wrap mt8" style={{ gap: 6 }}>
-            <span className={`badge ${fail ? 'warn' : 'good'}`}>CUSUM: {fail ? 'cuenta como falla' : 'cuenta como éxito'}</span>
+            {counts ? (
+              <span className={`badge ${fail ? 'warn' : 'good'}`}>CUSUM: {fail ? 'cuenta como falla' : 'cuenta como éxito'}</span>
+            ) : (
+              <span className="badge">
+                No suma a la CUSUM
+                {!c.attendingId ? ' · sin adscrito' : !p.firstOperator ? ' · participación parcial' : ' · en revisión'}
+              </span>
+            )}
             {p.incidents.map((i) => (
               <span key={i} className="badge crit">
                 <AlertTriangle size={11} /> {i === 'Otro' && p.incidentOther ? p.incidentOther : i}
@@ -76,6 +87,8 @@ export function CaseRow({ c, to, showResident, showAttending }: { c: CaseRecord;
             <span className="badge warn">
               <Clock size={11} /> Pendiente de evaluación
             </span>
+          ) : c.status === 'no-evaluable' ? (
+            <span className="badge">No evaluable</span>
           ) : (
             sup !== null && <SupervisionBadge v={sup} />
           )}

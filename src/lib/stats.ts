@@ -3,13 +3,13 @@ import {
   ANTS_ITEMS,
   type AntsDomain,
   EXCLUDE_UNDER_REVIEW,
+  OSCORE_TARGET,
   PROCEDURES,
   type ProcedureDef,
-  expectedBand,
   procDef,
 } from '../data/catalog'
 import type { CaseRecord, Evaluation, ProcedureRecord, User } from '../types'
-import { computeCusum, isCusumFailure, type CusumResult } from './cusum'
+import { computeCusum, isCusumFailure, type CusumItem, type CusumResult } from './cusum'
 import { academicYearStart, RESIDENTS, userById } from '../data/users'
 import { daysBetween, fmtDate, monthsBetween, parseDate, todayISO } from './dates'
 
@@ -27,9 +27,27 @@ export type EvaluatedCase = CaseRecord & { evaluation: Evaluation }
 export const evaluatedOf = (cases: CaseRecord[]) =>
   cases.filter((c): c is EvaluatedCase => c.status === 'evaluado' && !!c.evaluation)
 
+/** Marcado "amerita revisión" y un profesor aún no decide incluirlo (o decidió excluirlo) */
+export const isExcluded = (c: CaseRecord) =>
+  EXCLUDE_UNDER_REVIEW && !!c.evaluation?.needsProfessorReview && !c.professorReview?.include
+
 /** Casos que alimentan las gráficas (ver EXCLUDE_UNDER_REVIEW en catalog.ts) */
-export const chartCases = (cases: CaseRecord[]) =>
-  evaluatedOf(cases).filter((c) => !(EXCLUDE_UNDER_REVIEW && c.evaluation.needsProfessorReview && !c.professorReview?.include))
+export const chartCases = (cases: CaseRecord[]) => evaluatedOf(cases).filter((c) => !isExcluded(c))
+
+/**
+ * ¿Este procedimiento suma a la CUSUM? Solo como primer operador, solo si hubo adscrito
+ * (sin adscrito nadie lo validó) y si el caso no quedó excluido por revisión.
+ */
+export const countsForCusum = (p: ProcedureRecord, c: CaseRecord) => p.firstOperator && !!c.attendingId && !isExcluded(c)
+
+/** Registros de un procedimiento que entran a la CUSUM, en orden */
+export function cusumItems(residentCases: CaseRecord[], type: string): (CusumItem & { c: CaseRecord })[] {
+  return residentCases.flatMap((c) =>
+    c.procedures
+      .filter((p) => p.type === type && countsForCusum(p, c))
+      .map((proc) => ({ c, date: c.date, caseId: c.id, grade: c.grade, proc, oscore: c.evaluation?.supervision[proc.id] })),
+  )
+}
 
 /** El O-SCORE es por procedimiento: para el caso se usa el promedio */
 export const caseSupervision = (e: Evaluation) => avg(Object.values(e.supervision))
@@ -59,7 +77,7 @@ export const procedureCount = (cases: CaseRecord[]) => cases.reduce((s, c) => s 
 export interface ProcSummary {
   def: ProcedureDef
   exposure: number // todas las participaciones
-  cusum: CusumResult // solo como primer operador
+  cusum: CusumResult // solo como primer operador y con adscrito
   lastDate?: string
   daysSince?: number
   /** O-SCORE promedio que le han puesto en este procedimiento */
@@ -71,7 +89,7 @@ export function procedureSummaries(residentCases: CaseRecord[]): ProcSummary[] {
   const charted = chartCases(residentCases)
   return PROCEDURES.filter((d) => d.id !== 'otro').map((def) => {
     const all = residentCases.flatMap((c) => c.procedures.filter((p) => p.type === def.id).map((proc) => ({ date: c.date, caseId: c.id, proc })))
-    const cusum = computeCusum(all.filter((x) => x.proc.firstOperator), def)
+    const cusum = computeCusum(cusumItems(residentCases, def.id), def)
     const lastDate = all.length ? all[all.length - 1].date : undefined
     const supervision = avg(
       charted.flatMap((c) => c.procedures.filter((p) => p.type === def.id).map((p) => c.evaluation.supervision[p.id] ?? null)),
@@ -89,7 +107,9 @@ export function procedureScores(residentCases: CaseRecord[], type: string) {
 
 export const procLabel = (p: ProcedureRecord) => (p.label && (p.type === 'otro' || p.type === 'periferico') ? `${procDef(p.type).short}: ${p.label}` : procDef(p.type).label)
 
-export const failsFor = (p: ProcedureRecord) => isCusumFailure(p, procDef(p.type))
+/** Cómo cuenta para la CUSUM, con la tolerancia del grado que tenía el residente ese día */
+export const failsFor = (p: ProcedureRecord, c: Pick<CaseRecord, 'grade' | 'evaluation'>) =>
+  isCusumFailure(p, procDef(p.type), c.grade, c.evaluation?.supervision[p.id])
 
 // ───────────────────────── Alertas ─────────────────────────
 
@@ -97,7 +117,7 @@ export type AlertLevel = 'critical' | 'warning' | 'info'
 
 export interface Alert {
   level: AlertLevel
-  kind: 'cusum' | 'exposicion' | 'riesgo' | 'sin-adscrito' | 'revision' | 'desempeno'
+  kind: 'cusum' | 'exposicion' | 'riesgo' | 'sin-adscrito' | 'evento-critico' | 'revision' | 'desempeno'
   title: string
   detail: string
   residentId?: string
@@ -136,14 +156,14 @@ export function residentAlerts(u: User, residentCases: CaseRecord[], basePath: s
   if (u.grade) {
     const last10 = chartCases(residentCases).slice(-10)
     const m = avg(last10.map((c) => caseSupervision(c.evaluation)))
-    const [lo] = expectedBand(u.grade, monthsIntoGrade(u))
+    const lo = OSCORE_TARGET[u.grade]
     if (m !== null && last10.length >= 5 && m < lo - 0.25)
       out.push({
         level: 'warning',
         kind: 'desempeno',
         residentId: u.id,
         title: `Por debajo de lo esperado para ${u.grade}`,
-        detail: `O-SCORE promedio ${m.toFixed(1)} vs. ${lo.toFixed(1)} esperado`,
+        detail: `O-SCORE promedio ${m.toFixed(1)} vs. umbral ≥ ${lo} del grado`,
         to: basePath,
       })
   }
@@ -162,7 +182,19 @@ export function programAlerts(cases: CaseRecord[]): Alert[] {
       kind: 'sin-adscrito',
       residentId: c.residentId,
       title: 'Caso sin adscrito',
-      detail: `${c.supervisionGap === 'residente-mayor' ? 'Con residente de mayor jerarquía' : 'Estuvo solo'} · ${fmtDate(c.date)}`,
+      detail: `${c.supervisionGap === 'residente-mayor' ? 'Con residente de mayor jerarquía' : 'Estuvo solo'} · ${fmtDate(c.date)} · no se evalúa`,
+      to: `/a/caso/${c.id}`,
+    })
+  })
+
+  // El evento crítico SIEMPRE activa alerta, lo reporta el residente al registrar
+  cases.filter((c) => c.criticalEvent && recent(c)).forEach((c) => {
+    out.push({
+      level: 'warning',
+      kind: 'evento-critico',
+      residentId: c.residentId,
+      title: 'Evento crítico',
+      detail: `${c.criticalEventNote ?? 'Sin descripción'} · ${fmtDate(c.date)}`,
       to: `/a/caso/${c.id}`,
     })
   })

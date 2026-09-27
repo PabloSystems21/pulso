@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Bell, CheckCircle2, ChevronRight, KeyRound } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Bell, CheckCircle2, ChevronRight, KeyRound } from 'lucide-react'
 import { useStore } from '../store'
 import { avg, programAlerts } from '../lib/stats'
 import { cap, fmtDateLong, fmtDuration, todayISO } from '../lib/dates'
@@ -9,7 +9,6 @@ import { CaseRow } from '../components/case'
 
 export default function AttendingHome() {
   const { user, cases, accountOf } = useStore()
-  const nav = useNavigate()
   const me = user!
   const pending = cases
     .filter((c) => c.status === 'pendiente' && c.attendingId === me.id)
@@ -52,22 +51,21 @@ export default function AttendingHome() {
           </Link>
         )}
 
+        {/* Una sola lista de pendientes (antes había también una tarjeta "Por evaluar" que la duplicaba) */}
         {pending.length > 0 ? (
-          <button className="hero-card" style={{ width: '100%', border: 0, textAlign: 'left' }} onClick={() => nav(`/a/evaluar/${pending[0].id}`)}>
-            <div className="muted small bold">Por evaluar</div>
-            <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 44, fontWeight: 800, lineHeight: 1.1 }}>{pending.length}</span>
-              <span style={{ fontSize: 17, fontWeight: 700 }}>
-                caso{pending.length > 1 ? 's' : ''} pendiente{pending.length > 1 ? 's' : ''}
-              </span>
+          <>
+            <div className="h2" style={{ marginTop: 4 }}>
+              Pendientes <span className="badge warn">{pending.length}</span>
             </div>
-            <div className="row between mt12">
-              <span className="muted small">Autoevaluaciones esperando tu calificación</span>
-              <span className="btn sm accent" style={{ boxShadow: 'none' }}>
-                Empezar <ArrowRight size={16} />
-              </span>
+            <div className="tiny muted" style={{ margin: '-6px 2px 8px' }}>
+              Autoevaluaciones esperando tu calificación · toca una para evaluarla
             </div>
-          </button>
+            <div className="list">
+              {pending.map((c) => (
+                <CaseRow key={c.id} c={c} to={`/a/evaluar/${c.id}`} showResident />
+              ))}
+            </div>
+          </>
         ) : (
           <div className="card row">
             <CheckCircle2 color="var(--good)" />
@@ -76,17 +74,6 @@ export default function AttendingHome() {
               <div className="small muted">No tienes casos pendientes por evaluar.</div>
             </div>
           </div>
-        )}
-
-        {pending.length > 0 && (
-          <>
-            <div className="h2">Pendientes</div>
-            <div className="list">
-              {pending.map((c) => (
-                <CaseRow key={c.id} c={c} to={`/a/evaluar/${c.id}`} showResident />
-              ))}
-            </div>
-          </>
         )}
 
         {me.profesor && alerts.length > 0 && (

@@ -7,11 +7,12 @@ import { userById } from '../data/users'
 import { AlertCard, Empty, TopBar } from '../components/ui'
 
 const SECTIONS: { kind: Alert['kind']; title: string; hint: string }[] = [
-  { kind: 'sin-adscrito', title: 'Casos sin adscrito', hint: 'Por normativa requieren revisión: cualquier profesor puede evaluarlos' },
+  { kind: 'sin-adscrito', title: 'Casos sin adscrito', hint: 'Por normativa representan riesgo para el paciente. No se evalúan ni suman a la CUSUM' },
+  { kind: 'evento-critico', title: 'Eventos críticos', hint: 'Reportados por el residente al registrar el caso' },
   { kind: 'riesgo', title: 'Riesgo para el paciente', hint: 'Reportado por el adscrito que evaluó' },
-  { kind: 'revision', title: 'Ameritan revisión', hint: 'El adscrito pidió que un profesor valide el caso' },
+  { kind: 'revision', title: 'Ameritan revisión', hint: 'Quedan fuera de las gráficas hasta que un profesor decida si se incluyen' },
   { kind: 'cusum', title: 'Caídas de desempeño (CUSUM)', hint: 'La curva cruzó el límite inaceptable' },
-  { kind: 'desempeno', title: 'Por debajo de lo esperado', hint: 'Promedio de los últimos 10 casos contra la banda del grado' },
+  { kind: 'desempeno', title: 'Por debajo de lo esperado', hint: 'O-SCORE promedio de los últimos 10 casos contra el umbral del grado' },
 ]
 
 export default function Alerts() {
@@ -29,7 +30,7 @@ export default function Alerts() {
           </span>
           <div className="grow">
             <div className="bold">Equipo de adscritos</div>
-            <div className="small muted">Quién tiene pendientes y quién no ha cambiado su contraseña</div>
+            <div className="small muted">Quién tiene pendientes y qué calificaciones pone cada quien</div>
           </div>
           <ChevronRight size={18} className="muted" />
         </Link>

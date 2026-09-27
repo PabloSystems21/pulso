@@ -6,10 +6,19 @@ import { byDate } from './lib/stats'
 
 // Sin backend: el historial se genera en memoria y solo lo que el usuario crea/cambia
 // se guarda en localStorage. "Reiniciar demo" lo borra.
-const DATA_KEY = 'pulso:data:v2'
-const USER_KEY = 'pulso:user:v2'
+const DATA_KEY = 'pulso:data:v3'
+const USER_KEY = 'pulso:user:v3'
 
-/** Cuenta de acceso: usuario = código de empleado / matrícula */
+/**
+ * DEMO: el login acepta cualquier contraseña (el formulario viene prellenado).
+ * Para la versión final se pone en false y se quita el autollenado del login.
+ */
+export const DEMO_NO_PASSWORD = true
+
+/**
+ * Cuenta de acceso: usuario = código de empleado / matrícula.
+ * En el backend: la contraseña va con hash y `changed` es una columna que empieza en false para todos.
+ */
 interface Account {
   password: string
   changed: boolean
@@ -51,7 +60,7 @@ interface Store {
   /** Estado de la cuenta (si ya cambió su contraseña genérica) */
   accountOf: (id: string) => Account
   changePassword: (id: string, password: string) => void
-  /** Un profesor restablece la contraseña genérica de alguien */
+  /** Restablece la contraseña genérica. Solo el super admin (sin pantalla todavía: va con el backend) */
   resetPassword: (id: string) => void
 }
 
@@ -119,8 +128,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cases,
       login: (code, password) => {
         const u = findUser(code.trim())
-        if (!u) return 'Ese código no existe. Pídelo al profesor o al administrador.'
-        if (accountOf(u.id).password !== password) return 'Contraseña incorrecta.'
+        if (!u) return 'Ese código no existe. Pídelo al administrador del programa.'
+        if (!DEMO_NO_PASSWORD && accountOf(u.id).password !== password) return 'Contraseña incorrecta.'
         setUserId(u.id)
         return null
       },

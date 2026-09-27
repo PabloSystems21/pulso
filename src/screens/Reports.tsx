@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Printer } from 'lucide-react'
 import { useStore } from '../store'
-import type { Grade } from '../types'
-import { RESIDENTS, userById } from '../data/users'
-import { ANTS_DOMAINS, ANTS_TARGET, PROCEDURES, SUPERVISION, expectedBand, procDef } from '../data/catalog'
-import { antsDomains, avg, caseSupervision, chartCases, failsFor, monthsIntoGradeAt } from '../lib/stats'
+import type { Grade, ProcedureType } from '../types'
+import { RESIDENTS, USERS, userById } from '../data/users'
+import { ANTS_DOMAINS, ANTS_TARGET, OSCORE_TARGET, PROCEDURES, SHIFTS, SUPERVISION, procDef } from '../data/catalog'
+import { antsDomains, avg, caseSupervision, casesOf, chartCases, countsForCusum, cusumItems, failsFor } from '../lib/stats'
+import { isCusumFailure } from '../lib/cusum'
 import { fmtDuration, monthLong } from '../lib/dates'
 import { Kpi, TopBar } from '../components/ui'
 import { DomainBars, ORDINAL_BLUE, StackedBar } from '../components/charts'
@@ -17,6 +18,7 @@ export default function Reports() {
   const [grade, setGrade] = useState<Grade>('R1')
   const [period, setPeriod] = useState<Period>('mes')
   const [offset, setOffset] = useState(0)
+  const [siteProc, setSiteProc] = useState<ProcedureType>('laringoscopia')
 
   const now = new Date()
   const end = new Date(now.getFullYear(), now.getMonth() - offset, 1)
@@ -42,7 +44,7 @@ export default function Reports() {
 
   const { inP, ev, residents } = data
   const sup = avg(ev.map((c) => caseSupervision(c.evaluation)))
-  const [lo] = expectedBand(grade, monthsIntoGradeAt(`${keys[keys.length - 1]}-15`))
+  const lo = OSCORE_TARGET[grade]
   const durations = avg(ev.map((c) => c.evaluation.durationSec))
   const dom = antsDomains(ev.map((c) => c.evaluation))
   const dist = [1, 2, 3, 4, 5].map((v) => ({
@@ -52,13 +54,42 @@ export default function Reports() {
   }))
   const procRows = PROCEDURES.filter((p) => p.id !== 'otro')
     .map((def) => {
-      const list = inP.flatMap((c) => c.procedures.filter((p) => p.type === def.id && p.firstOperator))
-      const ok = list.filter((p) => !failsFor(p)).length
+      const list = inP.flatMap((c) => c.procedures.filter((p) => p.type === def.id && countsForCusum(p, c)).map((p) => ({ p, c })))
+      const ok = list.filter(({ p, c }) => !failsFor(p, c)).length
       return { def, n: list.length, rate: list.length ? ok / list.length : 0 }
     })
     .filter((r) => r.n > 0)
     .sort((a, b) => b.n - a.n)
   const noAttending = inP.filter((c) => !c.attendingId).length
+  // ¿Cambia el desempeño en complementaria (vespertino/guardia: más cansancio, menos vigilancia)?
+  const byShift = SHIFTS.map((sh) => {
+    const cs = inP.filter((c) => c.shift === sh.id)
+    const procs = cs.flatMap((c) => c.procedures.filter((p) => countsForCusum(p, c)).map((p) => ({ p, c })))
+    return {
+      sh,
+      n: cs.length,
+      oscore: avg(chartCases(cs).map((c) => caseSupervision(c.evaluation))),
+      procs: procs.length,
+      rate: procs.length ? procs.filter(({ p, c }) => !failsFor(p, c)).length / procs.length : null,
+      critical: cs.filter((c) => c.criticalEvent).length,
+    }
+  })
+
+  // Curva de la sede: todos los residentes del hospital, por número de intento acumulado.
+  // Se usa la definición estricta de éxito (la de R2/R3) para que sea comparable entre grados.
+  const site = useMemo(() => {
+    const def = procDef(siteProc)
+    const buckets: { ok: number; n: number }[] = []
+    USERS.filter((u) => u.role === 'residente').forEach((u) => {
+      cusumItems(casesOf(cases, u.id), siteProc).forEach((it, k) => {
+        const b = Math.min(Math.floor(k / 5), 9)
+        buckets[b] ??= { ok: 0, n: 0 }
+        buckets[b].n++
+        if (!isCusumFailure(it.proc, def, 'R2', it.oscore)) buckets[b].ok++
+      })
+    })
+    return buckets.map((b, i) => ({ label: i === 9 ? '46+' : `${i * 5 + 1}–${i * 5 + 5}`, ...b })).filter((b) => b && b.n)
+  }, [cases, siteProc])
   const risks = ev.filter((c) => c.evaluation.patientRisk).length
   const reviews = ev.filter((c) => c.evaluation.needsProfessorReview).length
   const themes = Object.entries(
@@ -196,6 +227,36 @@ export default function Reports() {
           </table>
         </div>
 
+        <div className="h2">Por jornada</div>
+        <div className="card">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Jornada</th>
+                <th className="r">Casos</th>
+                <th className="r">O-SCORE</th>
+                <th className="r">Éxito CUSUM</th>
+                <th className="r">Ev. crít.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byShift.map((r) => (
+                <tr key={r.sh.id}>
+                  <td>
+                    <div className="bold">{r.sh.label}</div>
+                    <div className="tiny muted">{r.sh.hint}</div>
+                  </td>
+                  <td className="r num">{r.n}</td>
+                  <td className="r num">{r.oscore?.toFixed(1) ?? '—'}</td>
+                  <td className="r num">{r.rate === null ? '—' : `${Math.round(r.rate * 100)}%`}</td>
+                  <td className="r num">{r.critical}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="tiny muted mt8">La jornada la marca el residente al registrar el caso. Sirve para ver si en complementaria (vespertino o guardia) cambia la curva.</div>
+        </div>
+
         <div className="h2">Prioridades de mejora más frecuentes</div>
         <div className="list">
           {themes.map(([t, n]) => (
@@ -204,6 +265,39 @@ export default function Reports() {
               <span className="badge num">{n}</span>
             </div>
           ))}
+        </div>
+
+        <div className="h2">Curva de la sede · todo el hospital</div>
+        <div className="card">
+          <select className="input" value={siteProc} onChange={(e) => setSiteProc(e.target.value as ProcedureType)} aria-label="Procedimiento">
+            {PROCEDURES.filter((p) => p.id !== 'otro').map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <div className="stack mt12">
+            {site.map((b) => (
+              <div key={b.label}>
+                <div className="row between small">
+                  <span className="ink2" style={{ fontWeight: 600 }}>
+                    Intentos {b.label}
+                  </span>
+                  <span className="num">
+                    <b>{Math.round((b.ok / b.n) * 100)}%</b> <span className="tiny muted">n={b.n}</span>
+                  </span>
+                </div>
+                <div className="bar-track" style={{ marginTop: 5 }}>
+                  <div className="bar-fill" style={{ width: `${(b.ok / b.n) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+            {!site.length && <div className="small muted">Sin registros de este procedimiento.</div>}
+          </div>
+          <div className="tiny muted mt12" style={{ lineHeight: 1.5 }}>
+            % de éxito según el número de intento de cada residente (1º–5º, 6º–10º…), con toda la residencia. Es descriptiva: con ella se van a definir los cortes propios de
+            la CUSUM (a partir del 2º año). Usa la definición estricta de éxito: ≤ 2 intentos, ≤ 10 min, sin ayuda o solo verbal y sin que el adscrito tome el control.
+          </div>
         </div>
 
         <div className="grid2 mt12">

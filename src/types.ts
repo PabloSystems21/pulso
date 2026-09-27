@@ -11,15 +11,22 @@ export interface User {
   role: Role
   /** Un profesor siempre es adscrito; un adscrito no siempre es profesor */
   profesor?: boolean
+  /**
+   * Año en que entró a la residencia (inicia el 1 de marzo). El grado NO se guarda:
+   * se calcula con esta fecha, así cada 1 de marzo todos suben solos (R1→R2→R3→egresado).
+   */
+  ingreso?: number
+  /** Derivados de `ingreso` al cargar (ver data/users.ts) */
   grade?: Grade
   gradeStart?: string
+  egresado?: boolean
   title?: string
 }
 
 /** Dónde ocurrió: no importa el número de quirófano, sino el área */
 export type Area = 'quirofano' | 'toco' | 'fuera'
-/** Ordinaria = matutino · Guardia = complementaria (vespertino o guardia) */
-export type Shift = 'ordinaria' | 'guardia'
+/** Ordinaria = matutino · Complementaria = vespertino o guardia */
+export type Shift = 'ordinaria' | 'complementaria'
 export type Urgency = 'electivo' | 'urgente'
 export type AnesthesiaType = 'general' | 'regional' | 'sedacion' | 'combinada'
 export type Asa = 1 | 2 | 3 | 4 | 5 | 6
@@ -76,7 +83,10 @@ export interface Evaluation {
   best: string
   improve: string
   comments?: string
-  /** Sustituye a "cuenta para la progresión": lo valida un profesor */
+  /**
+   * Sustituye a "cuenta para la progresión": si es true, el caso queda FUERA de las
+   * gráficas y de la CUSUM hasta que un profesor decida si se incluye.
+   */
   needsProfessorReview: boolean
   patientRisk: boolean
   patientRiskNote?: string
@@ -115,7 +125,8 @@ export interface CaseRecord {
   residentReflection: string
   /** Opcional: nota para el adscrito */
   residentNote?: string
-  status: 'pendiente' | 'evaluado'
+  /** no-evaluable = caso sin adscrito: genera alerta, no se evalúa y no suma a la CUSUM */
+  status: 'pendiente' | 'evaluado' | 'no-evaluable'
   evaluation?: Evaluation
   professorReview?: ProfessorReview
 }

@@ -28,7 +28,7 @@ export default function Sent() {
           </>
         ) : (
           <>
-            Como no hubo adscrito, se envió a <b>los profesores</b> del programa para su revisión.
+            Como no hubo adscrito, se notificó a <b>los profesores</b> del programa. Este caso no se evalúa y no suma a tu curva CUSUM.
           </>
         )}
       </p>
@@ -47,7 +47,7 @@ export default function Sent() {
         {c.procedures.length > 0 && (
           <div className="stack mt12">
             {c.procedures.map((p) => (
-              <ProcLine key={p.id} p={p} compact />
+              <ProcLine key={p.id} p={p} c={c} compact />
             ))}
           </div>
         )}
@@ -64,7 +64,7 @@ export default function Sent() {
 
       <div className="card flat mt24" style={{ width: '100%', textAlign: 'left', borderStyle: 'dashed' }}>
         <span className="demo-pill">Demo</span>
-        <div className="small ink2 mt8">Mira cómo le llega este caso a quien lo evalúa:</div>
+        <div className="small ink2 mt8">{c.attendingId ? 'Mira cómo le llega este caso a quien lo evalúa:' : 'Mira la alerta que le llega a un profesor:'}</div>
         <button className="list-row" style={{ padding: '10px 0 0' }} onClick={() => switchTo(att.id, c.attendingId ? `/a/evaluar/${c.id}` : `/a/caso/${c.id}`)}>
           <Avatar name={att.name} att />
           <span className="grow bold">Entrar como {att.short}</span>

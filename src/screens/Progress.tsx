@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { useStore } from '../store'
 import { userById } from '../data/users'
-import { ANTS_DOMAINS, ANTS_TARGET, GRADE_EXPECTATIONS, SUPERVISION, expectedBand } from '../data/catalog'
+import { ANTS_DOMAINS, ANTS_TARGET, ENTRUSTMENT_TARGET, GRADE_EXPECTATIONS, OSCORE_TARGET, SUPERVISION } from '../data/catalog'
 import {
   antsDomains,
   avg,
@@ -12,7 +12,6 @@ import {
   chartCases,
   juicio,
   monthsIntoGrade,
-  monthsIntoGradeAt,
   procedureSummaries,
   residentAlerts,
   rolling,
@@ -42,8 +41,8 @@ export default function Progress() {
 
   const smooth = rolling(inRange.map((c) => caseSupervision(c.evaluation) ?? 0), 8)
   const points = inRange.map((c, i) => {
-    const [lo, hi] = expectedBand(c.grade, monthsIntoGradeAt(c.date))
-    return { t: parseDate(c.date).getTime(), date: c.date, y: caseSupervision(c.evaluation) ?? 0, smooth: smooth[i], lo, hi }
+    // El umbral es el del grado que tenía ese día: se ve el escalón cuando sube de grado
+    return { t: parseDate(c.date).getTime(), date: c.date, y: caseSupervision(c.evaluation) ?? 0, smooth: smooth[i], lo: OSCORE_TARGET[c.grade], hi: 5 }
   })
   const sup = avg(inRange.map((c) => caseSupervision(c.evaluation)))
   const ent = avg(inRange.map((c) => c.evaluation.entrustment))
@@ -55,7 +54,6 @@ export default function Progress() {
     color: ORDINAL_BLUE[v - 1],
   }))
   const domains = antsDomains(evals.slice(-20).map((c) => c.evaluation))
-  const band = u.grade ? expectedBand(u.grade, monthsIntoGrade(u)) : null
   const recentImprove = evals.slice(-5).reverse()
 
   return (
@@ -97,7 +95,7 @@ export default function Progress() {
             </span>
             <span>
               <i className="band" style={{ background: 'rgba(12,163,12,.18)' }} />
-              Esperado para el grado
+              Umbral del grado (≥ {u.grade ? OSCORE_TARGET[u.grade] : '—'})
             </span>
           </div>
           <div className="tiny muted mt8">
@@ -106,8 +104,8 @@ export default function Progress() {
         </div>
 
         <div className="grid3 mt12">
-          <Kpi label="O-SCORE" value={sup?.toFixed(1) ?? '—'} hint={band ? `Esperado ${band[0].toFixed(1)}–${band[1].toFixed(1)}` : undefined} />
-          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint="por caso" />
+          <Kpi label="O-SCORE" value={sup?.toFixed(1) ?? '—'} hint={u.grade ? `Esperado ≥ ${OSCORE_TARGET[u.grade]}` : undefined} />
+          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint={u.grade ? `Esperado ≥ ${ENTRUSTMENT_TARGET[u.grade]}` : 'por caso'} />
           <Kpi label="Mini-CEX" value={jc?.toFixed(1) ?? '—'} hint="juicio clínico 1–5" />
         </div>
 
@@ -182,7 +180,7 @@ export default function Progress() {
                 ))}
               </div>
               <div className="tiny muted mt12">
-                Mismo formulario para todos los grados; lo que cambia es el umbral de interpretación. Hoy: mes {Math.floor(monthsIntoGrade(u)) + 1} de 12 del grado.
+                Mismo formulario para todos los grados; lo que cambia es el umbral de interpretación. Hoy: mes {Math.floor(monthsIntoGrade(u)) + 1} de 12 del grado. El grado sube solo cada 1 de marzo.
               </div>
             </div>
           </>

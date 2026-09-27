@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { useStore } from '../store'
 import { RESIDENTS } from '../data/users'
-import { expectedBand } from '../data/catalog'
-import { avg, caseSupervision, casesOf, chartCases, monthsIntoGrade, procedureSummaries, residentAlerts, rolling } from '../lib/stats'
+import { OSCORE_TARGET } from '../data/catalog'
+import { avg, caseSupervision, casesOf, chartCases, procedureSummaries, residentAlerts, rolling } from '../lib/stats'
 import { Avatar, TopBar } from '../components/ui'
 import { Sparkline } from '../components/charts'
 
@@ -16,7 +16,7 @@ export default function Residents() {
         const mine = casesOf(cases, u.id)
         const ev = chartCases(mine)
         const sup = avg(ev.slice(-10).map((c) => caseSupervision(c.evaluation)))
-        const [lo, hi] = expectedBand(u.grade!, monthsIntoGrade(u))
+        const lo = OSCORE_TARGET[u.grade!]
         const alerts = residentAlerts(u, mine, '')
         const competent = procedureSummaries(mine).filter((p) => p.cusum.state === 'competente').length
         return {
@@ -24,7 +24,6 @@ export default function Residents() {
           n: mine.length,
           sup,
           lo,
-          hi,
           crit: alerts.filter((a) => a.level === 'critical').length,
           warn: alerts.filter((a) => a.level !== 'critical').length,
           competent,
@@ -42,9 +41,7 @@ export default function Residents() {
           <div key={g}>
             <div className="h2">
               {g}
-              <span className="tiny muted">
-                Esperado hoy: {rows.find((r) => r.u.grade === g)!.lo.toFixed(1)}–{rows.find((r) => r.u.grade === g)!.hi.toFixed(1)}
-              </span>
+              <span className="tiny muted">Esperado: O-SCORE ≥ {OSCORE_TARGET[g]}</span>
             </div>
             <div className="list">
               {rows
