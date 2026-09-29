@@ -17,7 +17,7 @@ import type {
   User,
 } from '../types'
 import { addDays, daysBetween, toISODate } from '../lib/dates'
-import { ANTS_ITEMS, MINICEX_ITEMS } from './catalog'
+import { ANTS_ITEMS, MINICEX_ITEMS, procDef } from './catalog'
 import { ATTENDINGS, RESIDENTS, gradeForIngreso, residencyStart } from './users'
 
 type Rng = () => number
@@ -71,7 +71,7 @@ const PROFILES: Record<string, Profile> = {
 
 /** Curva de aprendizaje por procedimiento: pFalla(k) = pEnd + (pStart − pEnd)·e^(−k/K) */
 const LEARN: Record<ProcedureType, { pStart: number; pEnd: number; K: number }> = {
-  laringoscopia: { pStart: 0.35, pEnd: 0.03, K: 10 },
+  laringoscopia: { pStart: 0.2, pEnd: 0.01, K: 12 },
   mascarilla: { pStart: 0.15, pEnd: 0.01, K: 5 },
   videolaringo: { pStart: 0.2, pEnd: 0.03, K: 5 },
   fibroscopio: { pStart: 0.5, pEnd: 0.1, K: 4 },
@@ -87,16 +87,16 @@ const LEARN: Record<ProcedureType, { pStart: number; pEnd: number; K: number }> 
 const BLOCK_LABELS = ['Interescalénico', 'Supraclavicular', 'Axilar', 'Femoral', 'Ciático poplíteo', 'TAP', 'Erector espinal']
 
 const INCIDENT_BY_PROC: Partial<Record<ProcedureType, string[]>> = {
-  laringoscopia: ['Desaturación < 90%', 'Intubación esofágica', 'Trauma dental / vía aérea'],
-  videolaringo: ['Desaturación < 90%', 'Trauma dental / vía aérea'],
-  mascarilla: ['Desaturación < 90%'],
+  laringoscopia: ['Intubación esofágica', 'Trauma dental / vía aérea'],
+  videolaringo: ['Trauma dental / vía aérea'],
+  mascarilla: ['Broncoaspiración'],
   espinal: ['Parestesia', 'Hipotensión significativa', 'Bloqueo incompleto', 'Raquia masiva'],
   epidural: ['Punción dural', 'Punción vascular inadvertida', 'Bloqueo incompleto'],
   mixto: ['Punción dural', 'Bloqueo incompleto', 'Hipotensión significativa'],
   arterial: ['Hematoma'],
   cvc: ['Punción vascular inadvertida', 'Hematoma', 'Neumotórax'],
   periferico: ['Bloqueo incompleto', 'Parestesia', 'Intoxicación por anestésicos locales'],
-  fibroscopio: ['Desaturación < 90%'],
+  fibroscopio: ['Trauma dental / vía aérea'],
 }
 
 const BEST = {
@@ -186,12 +186,23 @@ function makeProcedure(ctx: Ctx, type: ProcedureType): ProcedureRecord {
       help = 3
     }
   } else {
+    // Éxito: cumple los criterios (≤ 2 intentos, ayuda a lo más verbal, en tiempo); rara vez se pasa
     attempts = chance(r, 0.78 + skill * 0.15) ? 1 : 2
-    help = chance(r, 0.85 - skill) ? (chance(r, 0.2) ? 2 : 1) : 0
+    help = chance(r, 0.85 - skill) ? (chance(r, 0.03) ? 2 : 1) : 0
   }
-  const time = fail ? (chance(r, 0.6) ? '>10' : '5-10') : chance(r, 0.3 + skill * 0.5) ? '<5' : chance(r, 0.8) ? '5-10' : '>10'
+  const time: ProcedureRecord['time'] = fail
+    ? chance(r, 0.6)
+      ? '>10'
+      : '5-10'
+    : type === 'mascarilla' || chance(r, 0.35 + skill * 0.55)
+      ? '<5'
+      : chance(r, 0.97)
+        ? '5-10'
+        : '>10'
   const pool = INCIDENT_BY_PROC[type] ?? []
   const incidents = pool.length && chance(r, fail ? 0.4 : 0.03) ? [pick(r, pool)] : []
+  // Criterio de logro (desaturación, bloqueo funcional, transducción, retorno venoso)
+  const logro = procDef(type).criterios.logro ? !(fail ? chance(r, 0.35) : chance(r, 0.02)) : undefined
   return {
     id: `${ctx.caseId}-p${++ctx.seq.n}`,
     type,
@@ -202,6 +213,7 @@ function makeProcedure(ctx: Ctx, type: ProcedureType): ProcedureRecord {
     time,
     help,
     incidents,
+    logro,
   }
 }
 
@@ -391,7 +403,7 @@ function pendingCases(today: Date): CaseRecord[] {
       anesthesia: 'regional',
       comorbidities: ['Embarazo', 'Obesidad'],
       procedures: [
-        { id: 'pend-dcruz-p1', type: 'espinal', firstOperator: true, success: true, attempts: 3, time: '>10', help: 2, incidents: ['Parestesia'] },
+        { id: 'pend-dcruz-p1', type: 'espinal', firstOperator: true, success: true, attempts: 3, time: '>10', help: 2, incidents: ['Parestesia'], logro: true },
       ],
       residentReflection: 'Me costó encontrar el espacio; necesito repasar referencias anatómicas en paciente con obesidad.',
       residentNote: 'Paciente con IMC 38. Al tercer intento lo logré con ayuda del Dr.',
@@ -412,8 +424,8 @@ function pendingCases(today: Date): CaseRecord[] {
       anesthesia: 'combinada',
       comorbidities: [],
       procedures: [
-        { id: 'pend-jsalinas-p1', type: 'epidural', firstOperator: true, success: true, attempts: 1, time: '5-10', help: 0, incidents: [] },
-        { id: 'pend-jsalinas-p2', type: 'arterial', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 1, incidents: [] },
+        { id: 'pend-jsalinas-p1', type: 'epidural', firstOperator: true, success: true, attempts: 1, time: '5-10', help: 0, incidents: [], logro: true },
+        { id: 'pend-jsalinas-p2', type: 'arterial', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 1, incidents: [], logro: true },
       ],
       residentReflection: 'La epidural salió al primer intento; la línea arterial me tomó dos punciones.',
     },
@@ -433,8 +445,8 @@ function pendingCases(today: Date): CaseRecord[] {
       anesthesia: 'general',
       comorbidities: ['Vía aérea difícil prevista'],
       procedures: [
-        { id: 'pend-rlara-p1', type: 'videolaringo', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [] },
-        { id: 'pend-rlara-p2', type: 'arterial', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [] },
+        { id: 'pend-rlara-p1', type: 'videolaringo', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [], logro: true },
+        { id: 'pend-rlara-p2', type: 'arterial', firstOperator: true, success: true, attempts: 1, time: '<5', help: 0, incidents: [], logro: true },
       ],
       residentReflection: 'Preparé plan B y C de vía aérea; todo salió conforme al plan.',
     },
@@ -459,7 +471,7 @@ function pendingCases(today: Date): CaseRecord[] {
       criticalEvent: true,
       criticalEventNote: 'Hipotensión sostenida tras el bloqueo; se manejó con efedrina en bolos.',
       procedures: [
-        { id: 'pend-vmendoza-sin-p1', type: 'espinal', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 0, incidents: ['Hipotensión significativa'] },
+        { id: 'pend-vmendoza-sin-p1', type: 'espinal', firstOperator: true, success: true, attempts: 2, time: '5-10', help: 0, incidents: ['Hipotensión significativa'], logro: true },
       ],
       residentReflection: 'Cesárea urgente de madrugada; no había adscrito disponible y me apoyó el R3 de guardia.',
     },

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { KeyRound, LogOut, RotateCcw, Users } from 'lucide-react'
+import { FlaskConical, KeyRound, LogOut, RotateCcw, Users } from 'lucide-react'
 import { useStore } from '../store'
 import { Avatar, Sheet, TopBar } from '../components/ui'
-import { ANTS_TARGET, ENTRUSTMENT_TARGET, GRADE_EXPECTATIONS, OSCORE_TARGET, OSCORE_TARGET_HIGH_RISK, PROCEDURES } from '../data/catalog'
-import { ALPHA, BETA, CUSUM_RULE, cusumParams } from '../lib/cusum'
+import { ENTRUSTMENT_TARGET, GRADE_EXPECTATIONS, OSCORE_TARGET, OSCORE_TARGET_HIGH_RISK, PROCEDURES, PROTOCOL_PROCEDURES, criteriaText, hasCurve } from '../data/catalog'
+import { cusumParams } from '../lib/cusum'
 
 export default function Profile() {
   const { user, logout, reset, accountOf, changePassword } = useStore()
@@ -96,19 +96,80 @@ export default function Profile() {
         <div className="h2">¿Cómo se calcula?</div>
         <div className="stack">
           <div className="card">
-            <div className="bold">O-SCORE · por procedimiento</div>
+            <div className="bold">O-SCORE · por procedimiento · juicio retrospectivo</div>
             <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
-              Escala 1–5 sobre cuánto apoyo requirió: de "tuve que hacerlo yo" a "lo hizo de forma independiente y segura". Se califica cada procedimiento por separado.
+              Escala 1–5 de cuánto tuvo que intervenir el adscrito: de "tuve que hacerlo yo" a "no necesité estar presente" (Gofton 2012; Tavares 2022). Solo la asigna el adscrito;
+              la autoevaluación del residente se guarda por separado.
             </p>
           </div>
           <div className="card">
-            <div className="bold">Entrustment y ANTS · por caso</div>
+            <div className="bold">Confiabilidad (entrustment) · por caso · juicio prospectivo</div>
             <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
-              El entrustment dice si podría atender un caso así después. ANTS evalúa habilidades no técnicas en 4 dominios (escala 1–4 + no observado). El Mini-CEX cubre el juicio clínico.
+              Qué se le confiaría en un caso similar: de "solo observar" a "puede supervisar a otros". Apta para decisiones formativas (Dubois 2021).
             </p>
           </div>
           <div className="card">
-            <div className="bold">Umbrales esperados</div>
+            <div className="bold">ANTS y Mini-CEX · por caso</div>
+            <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
+              ANTS: adaptación de 8 elementos de los 4 dominios de Fletcher 2003, escala 1–4 + no observado, de uso solo formativo (sin umbral ni alertas). Mini-CEX: adaptación
+              perioperatoria de Norcini 2003, escala de 5 puntos.
+            </p>
+          </div>
+          <div className="card">
+            <div className="bold">Éxito de un procedimiento</div>
+            <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
+              Se calcula con criterios por procedimiento, igual para todos los grados. Lo que reporta el residente es provisional; el resultado definitivo se fija cuando el adscrito
+              valida (y puede corregirlo con motivo). O-SCORE 1 siempre es fallo. Sin adscrito, participación parcial o "no lo presencié" no cuentan.
+            </p>
+            <ul className="tiny ink2" style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+              {PROTOCOL_PROCEDURES.map((p) => (
+                <li key={p.id}>
+                  <b>{p.short}:</b> {criteriaText(p).slice(0, -1).join(', ')}
+                  {p.criteriosProvisionales ? ' (provisional)' : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="card">
+            <div className="bold">Curva CUSUM · {PROCEDURES.filter(hasCurve).length} procedimientos con parámetros publicados</div>
+            <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
+              Método estándar (Aguirre Ospina 2014; Chang y McLean 2006): cada éxito resta s y cada fallo suma 1 − s. Cruzar H0 hacia abajo = alcanzó el estándar. Estar arriba de
+              H1 pasado el periodo de gracia = alerta formativa. Antes de los casos mínimos, "insuficiente para concluir".
+            </p>
+            <table className="data mt12">
+              <thead>
+                <tr>
+                  <th>Procedimiento</th>
+                  <th className="r">p0</th>
+                  <th className="r">p1</th>
+                  <th className="r">s</th>
+                  <th className="r">±h</th>
+                  <th className="r">Mín.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {PROCEDURES.filter(hasCurve).map((p) => {
+                  const k = cusumParams(p as Parameters<typeof cusumParams>[0])
+                  return (
+                    <tr key={p.id}>
+                      <td>{p.short}</td>
+                      <td className="r num">{p.p0}</td>
+                      <td className="r num">{p.p1}</td>
+                      <td className="r num">{k.s.toFixed(3)}</td>
+                      <td className="r num">{k.h1.toFixed(2)}</td>
+                      <td className="r num">{k.minCases}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <div className="tiny muted mt8">
+              α = β = 0.10. Fuente: Aguirre Ospina et al. 2014, tabla 3. En calibración (solo tasa de éxito, parámetros por estimar en el ciclo 2):{' '}
+              {PROTOCOL_PROCEDURES.filter((p) => !hasCurve(p)).map((p) => p.short).join(', ')}. Son {PROTOCOL_PROCEDURES.length} procedimientos del protocolo; "Otro" no tiene curva.
+            </div>
+          </div>
+          <div className="card">
+            <div className="bold">Referencias por grado · provisionales</div>
             <table className="data mt8">
               <thead>
                 <tr>
@@ -136,57 +197,31 @@ export default function Profile() {
                   ))}
                 </tr>
                 <tr>
-                  <td>Entrustment</td>
+                  <td>Confiabilidad</td>
                   {(['R1', 'R2', 'R3'] as const).map((g) => (
                     <td key={g} className="r num">
                       ≥ {ENTRUSTMENT_TARGET[g]}
                     </td>
                   ))}
                 </tr>
-                <tr>
-                  <td>ANTS</td>
-                  {(['R1', 'R2', 'R3'] as const).map((g) => (
-                    <td key={g} className="r num">
-                      ≥ {ANTS_TARGET[g]}
-                    </td>
-                  ))}
-                </tr>
               </tbody>
             </table>
-            <div className="tiny muted mt8">Mayor riesgo: {PROCEDURES.filter((p) => p.highRisk).map((p) => p.short).join(', ')}.</div>
+            <div className="tiny muted mt8">
+              Mayor riesgo: {PROCEDURES.filter((p) => p.altoRiesgo).map((p) => p.short).join(', ')}. Sin fuente documental todavía (fuente futura: Delphi); se configuran en
+              src/config/umbrales.json. Son para la lectura formativa en la sesión trimestral, no una calificación. ANTS no tiene umbral.
+            </div>
           </div>
-          <div className="card">
-            <div className="bold">CUSUM · curva por procedimiento</div>
-            <p className="small ink2" style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
-              Cada éxito baja la curva y cada falla la sube. Cruzar la línea verde = desempeño aceptable; cruzar la roja = tasa de falla inaceptable. α = {ALPHA}, β = {BETA}. Solo cuentan los
-              procedimientos como primer operador y con un adscrito que supervisó.
-            </p>
-            <ul className="small ink2" style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.5 }}>
-              <li>{CUSUM_RULE.R1}.</li>
-              <li>{CUSUM_RULE.R2.replace('(R2)', '(R2 y R3)')}.</li>
-            </ul>
-            <table className="data mt12">
-              <thead>
-                <tr>
-                  <th>Procedimiento</th>
-                  <th className="r">p0</th>
-                  <th className="r">p1</th>
-                  <th className="r">h</th>
-                </tr>
-              </thead>
-              <tbody>
-                {PROCEDURES.filter((p) => p.id !== 'otro').map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.short}</td>
-                    <td className="r num">{Math.round(p.p0 * 100)}%</td>
-                    <td className="r num">{Math.round(p.p1 * 100)}%</td>
-                    <td className="r num">±{cusumParams(p).h1.toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="tiny muted mt8">p0 = tasa de falla aceptable · p1 = inaceptable. Referencia provisional de literatura: los cortes propios se definirán con la curva de la sede.</div>
-          </div>
+          {user.profesor && (
+            <Link to="/a/verificacion" className="card card-link row">
+              <span className="avatar att">
+                <FlaskConical size={18} />
+              </span>
+              <div className="grow">
+                <div className="bold small">Verificación de la curva CUSUM</div>
+                <div className="tiny muted">Secuencia de prueba de 20 intentos contra los valores esperados</div>
+              </div>
+            </Link>
+          )}
         </div>
 
         <div className="h2">Demo</div>
@@ -204,7 +239,7 @@ export default function Profile() {
             <RotateCcw size={18} className="muted" /> <span className="grow bold">Reiniciar datos del demo</span>
           </button>
         </div>
-        <p className="tiny muted center mt16">Pulso · prototipo v0.4 · datos simulados, sin información de pacientes reales</p>
+        <p className="tiny muted center mt16">Pulso · prototipo v0.5 · datos simulados, sin información de pacientes reales</p>
       </div>
 
       <Sheet open={confirm} onClose={() => setConfirm(false)}>

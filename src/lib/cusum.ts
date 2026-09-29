@@ -1,60 +1,44 @@
 import type { ProcedureDef } from '../data/catalog'
-import type { Grade, ProcedureRecord } from '../types'
+import type { Grade } from '../types'
 
 /**
- * CUSUM de aprendizaje (Kestin 1995 / Bolsin & Colson 2000).
- *  - Cada falla suma (1 − s); cada éxito resta s.
- *  - h1 (arriba): la tasa de falla es inaceptable (p1).
- *  - h0 (abajo): la tasa de falla es aceptable (p0) → competencia.
- * α = β = 0.10 (convención en anestesia).
+ * CUSUM de aprendizaje, método estándar (Aguirre Ospina et al. 2014, tabla 1; Chang y McLean 2006):
+ *  P = ln(p1/p0) · Q = ln((1−p0)/(1−p1)) · s = Q/(P+Q)
+ *  a = ln((1−β)/α) · b = ln((1−α)/β) · H1 = a/(P+Q) · H0 = −b/(P+Q)
+ *  Cada éxito resta s; cada fallo suma (1 − s).
+ *  Cruzar H0 hacia abajo = alcanzó el estándar. Cruzar H1 hacia arriba = tasa de fallo mayor a la
+ *  inaceptable → alerta FORMATIVA, solo después del periodo de gracia.
+ * Casos mínimos para concluir = |H0 / (s − p0)| (se recalculan solos si cambian los parámetros).
+ * Verificado contra la secuencia de prueba de la lista de cotejo (hoja "Prueba CUSUM").
  */
-export const ALPHA = 0.1
-export const BETA = 0.1
 
 export interface CusumParams {
   s: number
   h0: number // negativo
   h1: number
+  /** Número mínimo de intentos para poder concluir */
+  minCases: number
 }
 
-export function cusumParams(def: Pick<ProcedureDef, 'p0' | 'p1'>): CusumParams {
+type Params = { p0: number; p1: number; alfa: number; beta: number }
+
+export function cusumParams(def: Params): CusumParams {
   const P = Math.log(def.p1 / def.p0)
   const Q = Math.log((1 - def.p0) / (1 - def.p1))
   const s = Q / (P + Q)
-  const a = Math.log((1 - BETA) / ALPHA)
-  const b = Math.log((1 - ALPHA) / BETA)
-  return { s, h1: a / (P + Q), h0: -b / (P + Q) }
+  const a = Math.log((1 - def.beta) / def.alfa)
+  const b = Math.log((1 - def.alfa) / def.beta)
+  const h1 = a / (P + Q)
+  const h0 = -b / (P + Q)
+  return { s, h1, h0, minCases: Math.round(Math.abs(h0 / (s - def.p0))) }
 }
 
-/**
- * Éxito = lo hizo el residente, en máx. 2 intentos, SIN que el adscrito tome el control y con el
- * resultado esperado. La tolerancia cambia por grado:
- *  - R1: se entiende que tome más de 2 intentos, más de 10 min o que necesite ayuda. Solo es falla
- *    si no lo logró o si el adscrito tomó el control (relevo, o O-SCORE 1 "lo tuve que hacer yo").
- *  - R2 y R3: además debe ser en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales.
- * POR CONFIRMAR: si una complicación con el procedimiento logrado cuenta como falla (hoy no).
- */
-export function isCusumFailure(p: ProcedureRecord, def: ProcedureDef, grade: Grade, oscore?: number) {
-  if (!p.success) return true
-  if (p.help >= 3 || oscore === 1) return true // el adscrito tomó el control
-  if (grade === 'R1') return false
-  return p.attempts > def.maxAttempts || p.time === '>10' || p.help >= 2
-}
-
-export const CUSUM_RULE: Record<Grade, string> = {
-  R1: 'Éxito (R1) = lo logró sin que el adscrito tomara el control; se toleran más intentos, tiempo y ayuda',
-  R2: 'Éxito (R2) = lo logró en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales',
-  R3: 'Éxito (R3) = lo logró en ≤ 2 intentos, ≤ 10 min y sin ayuda o solo indicaciones verbales',
-}
-
-/** Qué entra a la curva: solo como primer operador y solo si hubo un adscrito que lo supervisó */
+/** Lo que entra a la curva: el resultado ya decidido (éxito/fallo validado) */
 export interface CusumItem {
   date: string
   caseId: string
   grade: Grade
-  proc: ProcedureRecord
-  /** O-SCORE que puso el adscrito (si ya evaluó) */
-  oscore?: number
+  fail: boolean
 }
 
 export interface CusumPoint {
@@ -66,7 +50,7 @@ export interface CusumPoint {
   grade: Grade
 }
 
-export type CusumState = 'sin-datos' | 'curva' | 'competente' | 'alerta'
+export type CusumState = 'sin-datos' | 'insuficiente' | 'curva' | 'estandar' | 'alerta'
 
 export interface CusumResult extends CusumParams {
   points: CusumPoint[]
@@ -74,63 +58,65 @@ export interface CusumResult extends CusumParams {
   failures: number
   successRate: number
   state: CusumState
+  /** Intento en que cruzó H0 hacia abajo por primera vez */
   competentAt?: number
   lastCross?: { kind: 'aceptable' | 'inaceptable'; n: number; date: string }
-  /** CUSUM de monitoreo (Page, con reinicio en 0): detecta caídas recientes */
-  monitor: number
+  /** Intento en que se activó la alerta formativa (cruce de H1 ya fuera del periodo de gracia) */
+  alertAt?: number
+  grace: number
 }
 
-export function computeCusum(items: CusumItem[], def: ProcedureDef): CusumResult {
+export function computeCusum(items: CusumItem[], def: Params & Pick<ProcedureDef, 'periodoGracia'>, grace = def.periodoGracia): CusumResult {
   const params = cusumParams(def)
   const points: CusumPoint[] = []
   let value = 0
-  let monitor = 0
   let failures = 0
   let competentAt: number | undefined
   let lastCross: CusumResult['lastCross']
+  let alertAt: number | undefined
 
   items.forEach((it, i) => {
-    const fail = isCusumFailure(it.proc, def, it.grade, it.oscore)
-    const step = fail ? 1 - params.s : -params.s
+    const step = it.fail ? 1 - params.s : -params.s
     const prev = value
     value += step
-    monitor = Math.max(0, monitor + step)
-    if (fail) failures++
+    if (it.fail) failures++
     const n = i + 1
     if (prev > params.h0 && value <= params.h0) {
       lastCross = { kind: 'aceptable', n, date: it.date }
       if (competentAt === undefined) competentAt = n
     }
     if (prev < params.h1 && value >= params.h1) lastCross = { kind: 'inaceptable', n, date: it.date }
-    points.push({ n, value, fail, date: it.date, caseId: it.caseId, grade: it.grade })
+    // Al inicio del aprendizaje es esperable estar arriba de H1: la alerta solo cuenta pasada la gracia
+    if (value >= params.h1 && n > grace && alertAt === undefined) alertAt = n
+    if (value < params.h1) alertAt = undefined
+    points.push({ n, value, fail: it.fail, date: it.date, caseId: it.caseId, grade: it.grade })
   })
 
   const n = items.length
-  const recentFails = points.slice(-6).filter((p) => p.fail).length
   let state: CusumState = 'sin-datos'
   if (n > 0) {
-    // Alerta = la CUSUM de monitoreo cruzó h1 y hay ≥ 3 fallas en los últimos 6 intentos
-    if (n >= 6 && monitor >= params.h1 && recentFails >= 3) state = 'alerta'
-    else if (competentAt !== undefined) state = 'competente'
+    if (alertAt !== undefined) state = 'alerta'
+    else if (competentAt !== undefined) state = 'estandar'
+    else if (n < params.minCases) state = 'insuficiente'
     else state = 'curva'
   }
 
-  return {
-    ...params,
-    points,
-    n,
-    failures,
-    successRate: n ? (n - failures) / n : 0,
-    state,
-    competentAt,
-    lastCross,
-    monitor,
-  }
+  return { ...params, points, n, failures, successRate: n ? (n - failures) / n : 0, state, competentAt, lastCross, alertAt, grace }
 }
 
 export const CUSUM_STATE_LABEL: Record<CusumState, string> = {
-  'sin-datos': 'Sin registros',
-  curva: 'En curva de aprendizaje',
-  competente: 'Competencia alcanzada',
-  alerta: 'Alerta: caída de desempeño',
+  'sin-datos': 'Sin registros validados',
+  insuficiente: 'Insuficiente para concluir',
+  curva: 'Sin cruzar límites',
+  estandar: 'Alcanzó el estándar',
+  alerta: 'Alerta formativa',
+}
+
+/** Qué significa cada estado, en lenguaje formativo */
+export const CUSUM_STATE_HINT: Record<CusumState, string> = {
+  'sin-datos': 'Todavía no hay intentos validados por un adscrito.',
+  insuficiente: 'Aún no hay suficientes intentos para interpretar la curva.',
+  curva: 'Ya hay suficientes intentos, pero la curva no ha cruzado ningún límite.',
+  estandar: 'La curva cruzó el límite inferior (H0): desempeño compatible con el estándar.',
+  alerta: 'La curva está arriba del límite superior (H1) pasado el periodo de gracia: proponer acompañamiento y revisarlo en la sesión trimestral.',
 }

@@ -22,7 +22,7 @@ export default function ResidentHome() {
   const first10 = avg(evals.slice(0, 10).map((c) => caseSupervision(c.evaluation)))
   const month = todayISO().slice(0, 7)
   const monthCases = mine.filter((c) => c.date.startsWith(month))
-  const competent = procs.filter((p) => p.cusum.state === 'competente').length
+  const competent = procs.filter((p) => p.cusum?.state === 'estandar').length
   const trend = rolling(evals.map((c) => caseSupervision(c.evaluation) ?? 0), 8).slice(-40)
   const delta = last10 !== null && first10 !== null ? last10 - first10 : null
   const mustChangePassword = !accountOf(me.id).changed
@@ -123,7 +123,7 @@ export default function ResidentHome() {
           />
           <Kpi label="Procedimientos este mes" value={procedureCount(monthCases)} hint={`${procedureCount(mine)} en total`} />
           <Kpi label="Casos este mes" value={monthCases.length} hint={`${mine.length} en total`} />
-          <Kpi label="Competencias CUSUM" value={`${competent}/${procs.filter((p) => p.exposure).length}`} hint="procedimientos con curva aceptable" />
+          <Kpi label="Estándar alcanzado" value={`${competent}/${procs.filter((p) => p.cusum && p.exposure).length}`} hint="procedimientos con curva CUSUM" />
         </div>
         <Link to="/r/progreso" className="card card-link row mt12">
           <Sparkles size={18} color="var(--accent-ink)" />

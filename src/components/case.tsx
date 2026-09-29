@@ -1,24 +1,28 @@
 import { Link } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, ChevronRight, Clock, ShieldAlert, XCircle } from 'lucide-react'
 import type { CaseRecord, ProcedureRecord } from '../types'
-import { ANESTHESIA_LABEL, AREA_LABEL, ATTEMPT_TIMES, HELP, SUPERVISION, procDef } from '../data/catalog'
+import { ANESTHESIA_LABEL, AREA_LABEL, ATTEMPT_TIMES, HELP, LOGRO, SUPERVISION, procDef } from '../data/catalog'
 import { userById } from '../data/users'
 import { fmtRelative } from '../lib/dates'
-import { caseSupervision, countsForCusum, failsFor, procLabel } from '../lib/stats'
+import { caseSupervision, procLabel } from '../lib/stats'
+import { procedureOutcome } from '../lib/success'
 import { Avatar } from './ui'
 
-export const attemptText = (p: Pick<ProcedureRecord, 'success' | 'attempts'>) =>
-  p.success ? (p.attempts === 1 ? 'Al 1er intento' : `Al ${p.attempts === 4 ? '4º+' : `${p.attempts}º`} intento`) : `No se logró (${p.attempts === 4 ? '4+' : p.attempts} int.)`
+const nAttempts = (n: number) => (n === 6 ? '6+' : String(n))
 
-/** Lo mínimo del caso para saber cómo cuenta un procedimiento en la CUSUM */
-export type ProcCtx = Pick<CaseRecord, 'grade' | 'attendingId' | 'evaluation' | 'professorReview'>
+export const attemptText = (p: Pick<ProcedureRecord, 'success' | 'attempts'>) =>
+  p.success ? (p.attempts === 1 ? 'Al 1er intento' : `Al ${nAttempts(p.attempts)}º intento`) : `No se logró (${nAttempts(p.attempts)} int.)`
+
+/** Lo mínimo del caso para saber cómo cuenta un procedimiento */
+export type ProcCtx = Pick<CaseRecord, 'status' | 'attendingId' | 'evaluation' | 'professorReview'>
 
 export function ProcLine({ p, c, compact, score }: { p: ProcedureRecord; c: ProcCtx; compact?: boolean; score?: number }) {
-  const counts = countsForCusum(p, c as CaseRecord)
-  const fail = failsFor(p, c)
+  const o = procedureOutcome(p, c)
+  const logro = procDef(p.type).criterios.logro
+  const ok = o.status === 'no-cuenta' || o.status === 'provisional' ? o.success : o.status === 'exito'
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
-      <span style={{ color: p.success ? 'var(--good-ink)' : '#a32424', marginTop: 1 }}>{p.success ? <CheckCircle2 size={18} /> : <XCircle size={18} />}</span>
+      <span style={{ color: ok ? 'var(--good-ink)' : '#a32424', marginTop: 1 }}>{ok ? <CheckCircle2 size={18} /> : <XCircle size={18} />}</span>
       <div className="grow">
         <div className="row between">
           <span className="bold" style={{ fontSize: 14 }}>
@@ -28,16 +32,18 @@ export function ProcLine({ p, c, compact, score }: { p: ProcedureRecord; c: Proc
         </div>
         <div className="small ink2">
           {attemptText(p)} · {HELP[p.help].label.toLowerCase()} · {ATTEMPT_TIMES.find((t) => t.id === p.time)?.label}
+          {logro && p.logro !== undefined && ` · ${(p.logro ? LOGRO[logro].ok : LOGRO[logro].fail).toLowerCase()}`}
           {!p.firstOperator && ' · participó parcialmente'}
         </div>
         {!compact && (
           <div className="row wrap mt8" style={{ gap: 6 }}>
-            {counts ? (
-              <span className={`badge ${fail ? 'warn' : 'good'}`}>CUSUM: {fail ? 'cuenta como falla' : 'cuenta como éxito'}</span>
-            ) : (
-              <span className="badge">
-                No suma a la CUSUM
-                {!c.attendingId ? ' · sin adscrito' : !p.firstOperator ? ' · participación parcial' : ' · en revisión'}
+            {o.status === 'exito' && <span className="badge good">Éxito</span>}
+            {o.status === 'fallo' && <span className="badge warn">Fallo</span>}
+            {o.status === 'provisional' && <span className="badge">Provisional ({o.success ? 'éxito' : 'fallo'}) · se confirma al validar</span>}
+            {o.status === 'no-cuenta' && <span className="badge">No cuenta · {o.excludedWhy}</span>}
+            {o.override && (
+              <span className="badge brand">
+                Corregido por el adscrito: {o.override.from ? 'éxito' : 'fallo'} → {o.override.to ? 'éxito' : 'fallo'}
               </span>
             )}
             {p.incidents.map((i) => (
@@ -47,12 +53,15 @@ export function ProcLine({ p, c, compact, score }: { p: ProcedureRecord; c: Proc
             ))}
           </div>
         )}
+        {!compact && o.reasons.length > 0 && !o.override && <div className="tiny muted mt8">No cumplió: {o.reasons.join(' · ')}</div>}
+        {!compact && o.override && <div className="tiny muted mt8">Motivo de la corrección: {o.override.reason}</div>}
       </div>
     </div>
   )
 }
 
-export function SupervisionBadge({ v, label = 'O-SCORE' }: { v: number; label?: string }) {
+export function SupervisionBadge({ v, label = 'O-SCORE' }: { v: number | undefined; label?: string }) {
+  if (!v) return <span className="badge">No presenciado</span>
   const r = Math.round(v)
   const cls = r >= 4 ? 'good' : r === 3 ? 'brand' : r === 2 ? 'warn' : 'crit'
   return (
@@ -89,6 +98,8 @@ export function CaseRow({ c, to, showResident, showAttending }: { c: CaseRecord;
             </span>
           ) : c.status === 'no-evaluable' ? (
             <span className="badge">No evaluable</span>
+          ) : c.status === 'rechazado' ? (
+            <span className="badge crit">Rechazado</span>
           ) : (
             sup !== null && <SupervisionBadge v={sup} />
           )}

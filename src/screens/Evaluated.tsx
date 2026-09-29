@@ -18,7 +18,7 @@ export default function Evaluated() {
   if (!c || !c.evaluation) return null
   const resident = userById(c.residentId)
   const nextPending = cases.find((x) => x.status === 'pendiente' && x.attendingId === user!.id)
-  const types = [...new Set(c.procedures.map((p) => p.type))].filter((t) => t !== 'otro')
+  const types = [...new Set(c.procedures.map((p) => p.type))].filter((t) => !procDef(t).fueraDeProtocolo)
 
   return (
     <div className="success-wrap">
@@ -41,7 +41,7 @@ export default function Evaluated() {
           {c.procedures.map((p) => (
             <div key={p.id} className="row between">
               <span className="small ellipsis">{procDef(p.type).short}</span>
-              <SupervisionBadge v={c.evaluation!.supervision[p.id]} />
+              {c.evaluation!.supervision[p.id] ? <SupervisionBadge v={c.evaluation!.supervision[p.id]} /> : <span className="badge">No presenciado</span>}
             </div>
           ))}
         </div>
@@ -54,8 +54,8 @@ export default function Evaluated() {
                 <div key={t} className="row between">
                   <span className="small bold">{procDef(t).short}</span>
                   <span className="row" style={{ gap: 6 }}>
-                    <span className="tiny muted num">#{s.cusum.n}</span>
-                    <CusumBadge state={s.cusum.state} />
+                    <span className="tiny muted num">#{s.attempts.length}</span>
+                    <CusumBadge state={s.cusum ? s.cusum.state : 'calibracion'} />
                   </span>
                 </div>
               )

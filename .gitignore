@@ -4,3 +4,6 @@ dist
 .netlify
 *.log
 .DS_Store
+
+# Notas internas, PDFs y documentos del proyecto (el repo es público: no se suben)
+notas/

@@ -37,19 +37,19 @@ function withGrade(u: User): User {
  */
 export const USERS: User[] = (
   [
-    { id: '10482', name: 'Carlos Felipe González', short: 'Dr. Carlos Felipe González', role: 'adscrito', profesor: true, title: 'Profesor titular · Anestesiología' },
-    { id: '10517', name: 'Ana Sofía Treviño', short: 'Dra. Ana Sofía Treviño', role: 'adscrito', profesor: true, title: 'Profesora adjunta · Vía aérea' },
-    { id: '10603', name: 'Mariana Ortiz', short: 'Dra. Mariana Ortiz', role: 'adscrito', title: 'Adscrita · Anestesia obstétrica' },
-    { id: '10744', name: 'Luis Herrera', short: 'Dr. Luis Herrera', role: 'adscrito', title: 'Adscrito · Anestesia regional' },
-    { id: '10896', name: 'Raúl Vega', short: 'Dr. Raúl Vega', role: 'adscrito', title: 'Adscrito · Anestesia cardiovascular' },
-    { id: '10921', name: 'Paula Ibarra', short: 'Dra. Paula Ibarra', role: 'adscrito', title: 'Adscrita · Anestesia pediátrica' },
+    { id: '10482', name: 'Carlos Felipe González', short: 'Dr. Carlos Felipe González', sexo: 'm', role: 'adscrito', profesor: true, title: 'Profesor titular · Anestesiología' },
+    { id: '10517', name: 'Ana Sofía Treviño', short: 'Dra. Ana Sofía Treviño', sexo: 'f', role: 'adscrito', profesor: true, title: 'Profesora adjunta · Vía aérea' },
+    { id: '10603', name: 'Mariana Ortiz', short: 'Dra. Mariana Ortiz', sexo: 'f', role: 'adscrito', title: 'Adscrita · Anestesia obstétrica' },
+    { id: '10744', name: 'Luis Herrera', short: 'Dr. Luis Herrera', sexo: 'm', role: 'adscrito', title: 'Adscrito · Anestesia regional' },
+    { id: '10896', name: 'Raúl Vega', short: 'Dr. Raúl Vega', sexo: 'm', role: 'adscrito', title: 'Adscrito · Anestesia cardiovascular' },
+    { id: '10921', name: 'Paula Ibarra', short: 'Dra. Paula Ibarra', sexo: 'f', role: 'adscrito', title: 'Adscrita · Anestesia pediátrica' },
 
-    { id: '26104', name: 'Pablo Rodríguez', short: 'Pablo Rodríguez', role: 'residente', ingreso: cy },
-    { id: '26118', name: 'Daniela Cruz', short: 'Daniela Cruz', role: 'residente', ingreso: cy },
-    { id: '25073', name: 'Jorge Salinas', short: 'Jorge Salinas', role: 'residente', ingreso: cy - 1 },
-    { id: '25089', name: 'Valeria Mendoza', short: 'Valeria Mendoza', role: 'residente', ingreso: cy - 1 },
-    { id: '24035', name: 'Andrés Fuentes', short: 'Andrés Fuentes', role: 'residente', ingreso: cy - 2 },
-    { id: '24042', name: 'Regina Lara', short: 'Regina Lara', role: 'residente', ingreso: cy - 2 },
+    { id: '26104', name: 'Pablo Rodríguez', short: 'Pablo Rodríguez', sexo: 'm', role: 'residente', ingreso: cy },
+    { id: '26118', name: 'Daniela Cruz', short: 'Daniela Cruz', sexo: 'f', role: 'residente', ingreso: cy },
+    { id: '25073', name: 'Jorge Salinas', short: 'Jorge Salinas', sexo: 'm', role: 'residente', ingreso: cy - 1 },
+    { id: '25089', name: 'Valeria Mendoza', short: 'Valeria Mendoza', sexo: 'f', role: 'residente', ingreso: cy - 1 },
+    { id: '24035', name: 'Andrés Fuentes', short: 'Andrés Fuentes', sexo: 'm', role: 'residente', ingreso: cy - 2 },
+    { id: '24042', name: 'Regina Lara', short: 'Regina Lara', sexo: 'f', role: 'residente', ingreso: cy - 2 },
   ] as User[]
 ).map(withGrade)
 
@@ -62,6 +62,9 @@ export const RESIDENTS = USERS.filter((u) => u.role === 'residente' && !u.egresa
 
 /** Contraseña genérica de primer acceso: la reparte el administrador junto con el código. */
 export const initialPassword = (u: User) => `Anes.${u.id}`
+
+/** Concordancia de género: g(u, 'lista', 'listo') */
+export const g = (u: Pick<User, 'sexo'>, fem: string, masc: string) => (u.sexo === 'f' ? fem : masc)
 
 export const initials = (name: string) =>
   name

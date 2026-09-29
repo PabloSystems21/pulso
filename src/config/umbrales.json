@@ -1,0 +1,7 @@
+{
+  "_nota": "Umbrales de referencia por grado. PROVISIONALES: dictados por enseñanza sin fuente documental todavía (fuente futura: Delphi). Solo orientan la lectura formativa; no son calificación. ANTS es solo formativo: no tiene umbral.",
+  "oscore": { "R1": 3, "R2": 4, "R3": 4 },
+  "oscoreAltoRiesgo": { "R1": 2, "R2": 4, "R3": 4 },
+  "entrustment": { "R1": 3, "R2": 4, "R3": 4 },
+  "diasRecordatorioSinValidar": 3
+}

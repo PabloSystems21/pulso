@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
-import { Check, Pencil, ShieldAlert, Timer } from 'lucide-react'
+import { Ban, Check, EyeOff, Pencil, ShieldAlert, Timer } from 'lucide-react'
 import { useStore } from '../store'
 import type { Evaluation, ProcedureRecord, Score4, Score5 } from '../types'
 import {
@@ -16,12 +16,15 @@ import {
   SCALE5_LABELS,
   SHIFT_LABEL,
   SUPERVISION,
+  criteriaText,
+  procDef,
   type Item,
 } from '../data/catalog'
-import { userById } from '../data/users'
+import { g, userById } from '../data/users'
 import { fmtDateLong, fmtDuration } from '../lib/dates'
 import { procLabel } from '../lib/stats'
-import { Avatar, ChoiceList, ScaleSeg, TopBar, YesNo } from '../components/ui'
+import { criteriaResult } from '../lib/success'
+import { Avatar, ChoiceList, ScaleSeg, Sheet, TopBar, YesNo } from '../components/ui'
 import { ProcLine } from '../components/case'
 
 function LiveTimer({ since }: { since: number }) {
@@ -138,6 +141,12 @@ export default function Evaluate() {
   const [needsReview, setNeedsReview] = useState<boolean | undefined>(false)
   const [risk, setRisk] = useState<boolean | undefined>(false)
   const [riskNote, setRiskNote] = useState('')
+  // "No presencié este procedimiento" (no se valida ni cuenta)
+  const [notSeen, setNotSeen] = useState<Record<string, boolean>>({})
+  // Corrección del éxito/fallo que resultó del autorreporte (queda trazada con motivo)
+  const [overrides, setOverrides] = useState<Record<string, { success: boolean; reason: string } | undefined>>({})
+  const [rejecting, setRejecting] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
 
   const steps = useMemo(() => {
     const procs: ProcedureRecord[] = c?.procedures ?? []
@@ -156,7 +165,7 @@ export default function Evaluate() {
   if (!c) return null
   // Solo evalúa el adscrito asignado. Los casos sin adscrito no se evalúan (solo generan alerta).
   if (!c.attendingId || c.attendingId !== user!.id) return <Navigate to={`/a/caso/${c.id}`} replace />
-  if (c.status === 'evaluado') return submitted.current ? null : <Navigate to={`/a/caso/${c.id}`} replace />
+  if (c.status !== 'pendiente') return submitted.current ? null : <Navigate to={`/a/caso/${c.id}`} replace />
 
   const resident = userById(c.residentId)
   const cur = steps[step]
@@ -165,7 +174,7 @@ export default function Evaluate() {
     cur.kind === 'caso'
       ? true
       : cur.kind === 'oscore'
-        ? !!supervision[cur.proc!.id]
+        ? (!!supervision[cur.proc!.id] || !!notSeen[cur.proc!.id]) && (!overrides[cur.proc!.id] || overrides[cur.proc!.id]!.reason.trim().length > 3)
         : cur.kind === 'entrust'
           ? !!entrustment
           : cur.kind === 'ants'
@@ -189,7 +198,11 @@ export default function Evaluate() {
       attendingId: user!.id,
       evaluatedAt: new Date().toISOString(),
       durationSec,
-      supervision: Object.fromEntries(c.procedures.map((p) => [p.id, supervision[p.id]!])),
+      supervision: Object.fromEntries(c.procedures.filter((p) => !notSeen[p.id] && supervision[p.id]).map((p) => [p.id, supervision[p.id]!])),
+      notWitnessed: c.procedures.filter((p) => notSeen[p.id]).map((p) => p.id),
+      successOverride: Object.fromEntries(
+        c.procedures.filter((p) => !notSeen[p.id] && overrides[p.id]).map((p) => [p.id, { success: overrides[p.id]!.success, reason: overrides[p.id]!.reason.trim() }]),
+      ),
       entrustment: entrustment!,
       ants: pick<Score4>(ANTS_ITEMS, ants),
       miniCex: pick<Score5>(MINICEX_ITEMS, miniCex),
@@ -203,6 +216,13 @@ export default function Evaluate() {
     submitted.current = true
     saveCase({ ...c, status: 'evaluado', evaluation })
     nav(`/a/listo/${c.id}`, { replace: true, state: { secs: durationSec } })
+  }
+
+  /** El registro no corresponde (no lo presenció, datos que no reconoce…): no cuenta para nada */
+  const reject = () => {
+    submitted.current = true
+    saveCase({ ...c, status: 'rechazado', rejection: { attendingId: user!.id, at: new Date().toISOString(), reason: rejectReason.trim() } })
+    nav('/a', { replace: true })
   }
 
   return (
@@ -301,30 +321,97 @@ export default function Evaluate() {
           </div>
         )}
 
-        {cur.kind === 'oscore' && (
-          <div className="question">
-            <div className="q-hint" style={{ margin: '0 2px 4px' }}>
-              Durante {procLabel(cur.proc!).toLowerCase()}
-            </div>
-            <div className="q-title">El nivel de apoyo que requirió fue…</div>
-            <ChoiceList
-              numbered
-              value={supervision[cur.proc!.id]}
-              onPick={(v) => {
-                setSupervision((x) => ({ ...x, [cur.proc!.id]: v }))
-                autoNext()
-              }}
-              options={SUPERVISION.map((s) => ({ v: s.v, title: s.text }))}
-            />
-          </div>
+        {cur.kind === 'caso' && (
+          <button className="btn ghost block mt16" onClick={() => setRejecting(true)}>
+            <Ban size={16} /> Este registro no corresponde (rechazar)
+          </button>
         )}
+
+        {cur.kind === 'oscore' &&
+          (() => {
+            const p = cur.proc!
+            const def = procDef(p.type)
+            const sup = supervision[p.id]
+            const res = criteriaResult(p, def, sup)
+            const ov = overrides[p.id]
+            return (
+              <div className="question">
+                <div className="q-hint" style={{ margin: '0 2px 4px' }}>
+                  Durante {procLabel(p).toLowerCase()} · juicio retrospectivo
+                </div>
+                <div className="q-title">¿Cuánto tuviste que intervenir?</div>
+                <div className="card tight" style={{ marginBottom: 10 }}>
+                  <ProcLine p={p} c={{ status: 'pendiente', attendingId: c.attendingId }} compact />
+                </div>
+                {notSeen[p.id] ? (
+                  <div className="card flat" style={{ background: '#eef2f3', border: 0 }}>
+                    <div className="small bold">No presenciaste este procedimiento</div>
+                    <div className="tiny ink2" style={{ marginTop: 4 }}>
+                      No se valida: queda fuera de la curva y de la tasa de éxito.
+                    </div>
+                    <button className="btn sm mt8" onClick={() => setNotSeen((x) => ({ ...x, [p.id]: false }))}>
+                      Sí lo presencié
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <ChoiceList numbered value={sup} onPick={(v) => setSupervision((x) => ({ ...x, [p.id]: v }))} options={SUPERVISION.map((s) => ({ v: s.v, title: s.text }))} />
+                    <button
+                      className="btn ghost sm mt8"
+                      onClick={() => {
+                        setNotSeen((x) => ({ ...x, [p.id]: true }))
+                        setOverrides((x) => ({ ...x, [p.id]: undefined }))
+                      }}
+                    >
+                      <EyeOff size={14} /> No presencié este procedimiento
+                    </button>
+                    {sup && (
+                      <div className="card flat mt12" style={{ background: (ov ? ov.success : res.success) ? 'var(--good-soft)' : 'var(--warn-soft)', border: 0 }}>
+                        <div className="small bold">
+                          Según los criterios: {res.success ? 'éxito' : 'fallo'}
+                          {ov && ` → corregido a ${ov.success ? 'éxito' : 'fallo'}`}
+                        </div>
+                        <div className="tiny ink2" style={{ marginTop: 4 }}>
+                          {res.reasons.length ? `No cumplió: ${res.reasons.join(' · ')}.` : 'Cumplió todos los criterios.'} Criterios: {criteriaText(def).join(' · ')}.
+                        </div>
+                        {!ov ? (
+                          <button className="btn sm mt8" onClick={() => setOverrides((x) => ({ ...x, [p.id]: { success: !res.success, reason: '' } }))}>
+                            <Pencil size={14} /> Corregir: fue {res.success ? 'fallo' : 'éxito'}
+                          </button>
+                        ) : (
+                          <>
+                            <div className="field-label">
+                              ¿Por qué lo corriges? <span style={{ color: 'var(--crit)' }}>*</span>
+                            </div>
+                            <textarea
+                              className="textarea"
+                              style={{ minHeight: 56 }}
+                              autoFocus
+                              value={ov.reason}
+                              onChange={(e) => setOverrides((x) => ({ ...x, [p.id]: { ...ov, reason: e.target.value } }))}
+                              placeholder="Queda registrado quién lo corrigió, cuándo y por qué"
+                            />
+                            <button className="btn sm ghost mt8" onClick={() => setOverrides((x) => ({ ...x, [p.id]: undefined }))}>
+                              Quitar corrección
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )
+          })()}
 
         {cur.kind === 'entrust' && (
           <div className="question">
             <div className="q-hint" style={{ margin: '0 2px 4px' }}>
-              Viendo el caso completo
+              Juicio prospectivo · en un caso similar
             </div>
-            <div className="q-title">{resident.name.split(' ')[0]} está listo para…</div>
+            <div className="q-title">
+              {resident.name.split(' ')[0]} está {g(resident, 'lista', 'listo')} para…
+            </div>
             <ChoiceList
               numbered
               value={entrustment}
@@ -340,7 +427,7 @@ export default function Evaluate() {
         {cur.kind === 'ants' && (
           <div className="question">
             <div className="q-title">Habilidades no técnicas (ANTS)</div>
-            <div className="q-hint">Se evalúan por caso, no por procedimiento.</div>
+            <div className="q-hint">Por caso · uso formativo (para la discusión, no para calificar). Adaptación de ANTS (Fletcher 2003): 8 elementos de los 4 dominios.</div>
             <ItemBlock
               items={ANTS_ITEMS}
               values={ants}
@@ -354,7 +441,7 @@ export default function Evaluate() {
         {cur.kind === 'cex' && (
           <div className="question">
             <div className="q-title">Mini-CEX perioperatorio</div>
-            <div className="q-hint">Saberes clínicos y juicio aplicado al caso.</div>
+            <div className="q-hint">Juicio clínico aplicado al caso · adaptación perioperatoria del Mini-CEX (Norcini 2003), escala de 5 puntos.</div>
             <ItemBlock items={MINICEX_ITEMS} values={miniCex} max={5} onChange={(k, v) => setMiniCex((x) => ({ ...x, [k]: v }))} />
           </div>
         )}
@@ -384,8 +471,8 @@ export default function Evaluate() {
             <div className="field-label">¿Este caso amerita revisión de un profesor?</div>
             <YesNo neutral value={needsReview} onPick={setNeedsReview} />
             <div className="tiny muted mt8">
-              Úsalo si este caso no debería contar para su progresión (falla de equipo, cambio de turno, situación muy particular…).
-              {needsReview && ' Queda fuera de sus gráficas y de la CUSUM hasta que un profesor decida si se incluye.'}
+              Márcalo si un profesor debe revisar el caso antes de que cuente (falla de equipo, cambio de turno, situación muy particular…). Mientras tanto queda fuera de sus
+              gráficas y de la curva.
             </div>
             <div className="field-label">¿Hubo riesgo para el paciente atribuible al desempeño del residente?</div>
             <YesNo neutral value={risk} onPick={setRisk} />
@@ -407,7 +494,16 @@ export default function Evaluate() {
             <div className="q-hint">Una vez enviada, la evaluación ya no se puede modificar. Toca una sección para corregirla.</div>
             <div className="list">
               {c.procedures.map((p) => (
-                <ReviewRow key={p.id} label={`O-SCORE · ${procLabel(p)}`} value={`${supervision[p.id]} · ${SUPERVISION[supervision[p.id]! - 1].short}`} onEdit={() => goTo(`o-${p.id}`)} />
+                <ReviewRow
+                  key={p.id}
+                  label={`O-SCORE · ${procLabel(p)}`}
+                  value={
+                    notSeen[p.id]
+                      ? 'No lo presencié'
+                      : `${supervision[p.id]} · ${SUPERVISION[supervision[p.id]! - 1].short}${overrides[p.id] ? ` · corregido a ${overrides[p.id]!.success ? 'éxito' : 'fallo'}` : ''}`
+                  }
+                  onEdit={() => goTo(`o-${p.id}`)}
+                />
               ))}
               <ReviewRow label="Entrustment del caso" value={`${entrustment} · ${ENTRUSTMENT[entrustment! - 1].short}`} onEdit={() => goTo('entrust')} />
               <ReviewRow label="ANTS" value={scoreSummary(ANTS_ITEMS, ants)} onEdit={() => goTo('ants')} />
@@ -442,6 +538,25 @@ export default function Evaluate() {
           )}
         </button>
       </div>
+
+      <Sheet open={rejecting} onClose={() => setRejecting(false)}>
+        <div className="bold" style={{ fontSize: 18 }}>
+          ¿Rechazar este registro?
+        </div>
+        <p className="small ink2">Úsalo si no presenciaste el caso o los datos no corresponden. No contará para nada y se avisa a los profesores.</p>
+        <div className="field-label">
+          Motivo <span style={{ color: 'var(--crit)' }}>*</span>
+        </div>
+        <textarea className="textarea" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Ej. No estuve en ese caso" />
+        <div className="row mt16">
+          <button className="btn block" onClick={() => setRejecting(false)}>
+            Cancelar
+          </button>
+          <button className="btn primary block" disabled={rejectReason.trim().length < 4} onClick={reject}>
+            Rechazar
+          </button>
+        </div>
+      </Sheet>
     </>
   )
 }

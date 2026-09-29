@@ -11,6 +11,8 @@ export interface User {
   role: Role
   /** Un profesor siempre es adscrito; un adscrito no siempre es profesor */
   profesor?: boolean
+  /** Para la concordancia de género en los textos ("está lista / listo") */
+  sexo?: 'f' | 'm'
   /**
    * Año en que entró a la residencia (inicia el 1 de marzo). El grado NO se guarda:
    * se calcula con esta fecha, así cada 1 de marzo todos suben solos (R1→R2→R3→egresado).
@@ -54,12 +56,18 @@ export interface ProcedureRecord {
   /** "¿Cuál?" para bloqueo periférico y para Otro */
   label?: string
   firstOperator: boolean
+  /** "¿Lo lograste?" del residente. Ya no define el éxito por sí solo: ver lib/success.ts */
   success: boolean
-  attempts: 1 | 2 | 3 | 4 // 4 = "4 o más"
+  attempts: 1 | 2 | 3 | 4 | 5 | 6 // 6 = "6 o más"
   time: AttemptTime
   help: HelpLevel
   incidents: string[]
   incidentOther?: string
+  /**
+   * Criterio de logro del procedimiento (sí/no), según config: sin desaturación, bloqueo funcional,
+   * transducción adecuada o retorno venoso confirmado. true = se cumplió.
+   */
+  logro?: boolean
   notes?: string
 }
 
@@ -72,8 +80,15 @@ export interface Evaluation {
   attendingId: string
   evaluatedAt: string
   durationSec?: number
-  /** O-SCORE: es POR PROCEDIMIENTO. Llave = id del procedimiento */
+  /** O-SCORE: es POR PROCEDIMIENTO. Llave = id del procedimiento (falta si no lo presenció) */
   supervision: Record<string, 1 | 2 | 3 | 4 | 5>
+  /** Procedimientos que el adscrito marcó como "no presencié": no se validan ni cuentan */
+  notWitnessed?: string[]
+  /**
+   * El adscrito corrige el éxito/fallo que resultó del autorreporte. Queda trazado: quién
+   * (attendingId), cuándo (evaluatedAt), qué cambió y por qué.
+   */
+  successOverride?: Record<string, { success: boolean; reason: string }>
   /** Entrustment: es POR CASO */
   entrustment: 1 | 2 | 3 | 4 | 5
   /** ANTS: por caso */
@@ -125,8 +140,12 @@ export interface CaseRecord {
   residentReflection: string
   /** Opcional: nota para el adscrito */
   residentNote?: string
-  /** no-evaluable = caso sin adscrito: genera alerta, no se evalúa y no suma a la CUSUM */
-  status: 'pendiente' | 'evaluado' | 'no-evaluable'
+  /**
+   * no-evaluable = caso sin adscrito: genera alerta, no se evalúa y no suma a la CUSUM.
+   * rechazado = el adscrito rechazó el registro (no corresponde / no lo presenció): no cuenta para nada.
+   */
+  status: 'pendiente' | 'evaluado' | 'no-evaluable' | 'rechazado'
+  rejection?: { attendingId: string; at: string; reason: string }
   evaluation?: Evaluation
   professorReview?: ProfessorReview
 }

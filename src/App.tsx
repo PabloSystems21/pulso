@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { HashRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { BarChart3, Bell, ClipboardCheck, ClipboardList, Home, Plus, UserRound, Users } from 'lucide-react'
 import { StoreProvider, useStore } from './store'
-import { TabBar, type TabItem } from './components/ui'
+import { OfflineBanner, TabBar, type TabItem } from './components/ui'
 import type { Role } from './types'
 import Login from './screens/Login'
 import ResidentHome from './screens/ResidentHome'
@@ -20,6 +20,7 @@ import Team from './screens/Team'
 import Residents from './screens/Residents'
 import Reports from './screens/Reports'
 import Profile from './screens/Profile'
+import Verification from './screens/Verification'
 
 function ScrollTop() {
   const { pathname } = useLocation()
@@ -67,6 +68,7 @@ function Shell({ role, tabs }: { role: Role; tabs?: boolean }) {
   }
   return (
     <div className="app">
+      <OfflineBanner />
       <Outlet />
       {tabs && <TabBar items={items} />}
     </div>
@@ -120,6 +122,7 @@ export default function App() {
               <Route path="residente/:rid/procedimiento/:proc" element={<ProcedureDetail />} />
               <Route path="residente/:rid/caso/:id" element={<CaseDetail />} />
               <Route path="reportes" element={<Reports />} />
+              <Route path="verificacion" element={<Verification />} />
             </Route>
           </Route>
           <Route path="/a" element={<Shell role="adscrito" />}>

@@ -18,7 +18,7 @@ export default function Residents() {
         const sup = avg(ev.slice(-10).map((c) => caseSupervision(c.evaluation)))
         const lo = OSCORE_TARGET[u.grade!]
         const alerts = residentAlerts(u, mine, '')
-        const competent = procedureSummaries(mine).filter((p) => p.cusum.state === 'competente').length
+        const competent = procedureSummaries(mine).filter((p) => p.cusum?.state === 'estandar').length
         return {
           u,
           n: mine.length,
@@ -41,7 +41,7 @@ export default function Residents() {
           <div key={g}>
             <div className="h2">
               {g}
-              <span className="tiny muted">Esperado: O-SCORE ≥ {OSCORE_TARGET[g]}</span>
+              <span className="tiny muted">Referencia provisional: O-SCORE ≥ {OSCORE_TARGET[g]}</span>
             </div>
             <div className="list">
               {rows
@@ -52,7 +52,7 @@ export default function Residents() {
                     <div className="grow" style={{ minWidth: 0 }}>
                       <div className="bold">{r.u.short}</div>
                       <div className="tiny muted num">
-                        {r.n} casos · O-SCORE {r.sup?.toFixed(1) ?? '—'} · {r.competent} competencias
+                        {r.n} casos · O-SCORE {r.sup?.toFixed(1) ?? '—'} · {r.competent} con estándar alcanzado
                       </div>
                       <div className="row wrap" style={{ gap: 6, marginTop: 5 }}>
                         {r.crit > 0 && (
@@ -65,7 +65,7 @@ export default function Residents() {
                             {r.warn} aviso{r.warn > 1 ? 's' : ''}
                           </span>
                         )}
-                        {r.sup !== null && r.sup < r.lo ? <span className="badge warn">Bajo lo esperado</span> : <span className="badge good">En rango</span>}
+                        {r.sup !== null && r.sup < r.lo ? <span className="badge warn">Revisar en sesión trimestral</span> : <span className="badge good">En rango</span>}
                       </div>
                     </div>
                     <Sparkline values={r.trend} />
@@ -75,7 +75,7 @@ export default function Residents() {
             </div>
           </div>
         ))}
-        <div className="tiny muted mt12">O-SCORE = promedio de los últimos 10 casos evaluados. La línea es el promedio móvil de los últimos 40.</div>
+        <div className="tiny muted mt12">O-SCORE = promedio de los últimos 10 casos validados, contra una referencia provisional del grado (solo O-SCORE; ANTS no cuenta). La línea es el promedio móvil de los últimos 40.</div>
       </div>
     </>
   )

@@ -1,4 +1,6 @@
 import type { AnesthesiaType, Area, Asa, AttemptTime, Grade, HelpLevel, ProcedureType, Shift } from '../types'
+import PROC_CONFIG from '../config/procedimientos.json'
+import UMBRALES from '../config/umbrales.json'
 
 /**
  * Un caso marcado "amerita revisión de un profesor" queda FUERA de las gráficas y de la
@@ -35,36 +37,74 @@ export const COMORBIDITIES = ['Vía aérea difícil prevista', 'Obesidad', 'Emba
 
 // ───────────────────────── Procedimientos ─────────────────────────
 
+// La tabla vive en src/config/procedimientos.json (se edita sin tocar el código).
+
+/** Criterio de logro sí/no de cada procedimiento */
+export type LogroKey = 'sinDesaturacion' | 'bloqueoFuncional' | 'transduccion' | 'retornoVenoso'
+
+export interface SuccessCriteria {
+  maxIntentos: number
+  /** '<5' = menos de 5 min · '5-10' = hasta 10 min. '> 10 min' siempre es fallo */
+  maxTiempo: '<5' | '5-10'
+  /** 0 = ninguna · 1 = solo verbal · null = la ayuda no es criterio (el relevo siempre es fallo) */
+  ayudaMax: HelpLevel | null
+  logro: LogroKey | null
+}
+
 export interface ProcedureDef {
   id: ProcedureType
   label: string
   short: string
-  /** Tasa de falla aceptable (p0) e inaceptable (p1) para CUSUM — POR CONFIRMAR con enseñanza */
-  p0: number
-  p1: number
-  /** Más intentos que esto cuenta como falla para la curva */
-  maxAttempts: number
-  /** Pide "¿cuál?" en texto libre */
-  needsLabel?: boolean
+  /** activo = curva CUSUM y alertas · calibracion = solo tasa de éxito (parámetros por estimar) */
+  estado: 'activo' | 'calibracion'
+  /** Tasa de fallo aceptable (p0) e inaceptable (p1); null mientras está en calibración */
+  p0: number | null
+  p1: number | null
+  alfa: number
+  beta: number
+  fuente: string
+  criterios: SuccessCriteria
+  /** Criterios aún no definidos por enseñanza: se usa un criterio general provisional */
+  criteriosProvisionales?: boolean
+  /** Intentos antes de que un cruce de H1 dispare la alerta formativa (provisional) */
+  periodoGracia: number
   /** Técnica de mayor riesgo: al R1 se le pide un umbral de O-SCORE menor (2–3) */
-  highRisk?: boolean
+  altoRiesgo?: boolean
+  /** Pide "¿cuál?" en texto libre */
+  pideNombre?: boolean
+  /** "Otro": no pertenece a los 10 procedimientos del protocolo */
+  fueraDeProtocolo?: boolean
 }
 
-export const PROCEDURES: ProcedureDef[] = [
-  { id: 'laringoscopia', label: 'Laringoscopia directa', short: 'Laringoscopia', p0: 0.1, p1: 0.2, maxAttempts: 2 },
-  { id: 'mascarilla', label: 'Ventilación con mascarilla', short: 'Mascarilla', p0: 0.05, p1: 0.15, maxAttempts: 2 },
-  { id: 'videolaringo', label: 'Videolaringoscopia', short: 'Videolaringo', p0: 0.1, p1: 0.2, maxAttempts: 2 },
-  { id: 'fibroscopio', label: 'Fibroscopio', short: 'Fibroscopio', p0: 0.2, p1: 0.4, maxAttempts: 2, highRisk: true },
-  { id: 'espinal', label: 'Bloqueo espinal', short: 'Espinal', p0: 0.1, p1: 0.2, maxAttempts: 2 },
-  { id: 'epidural', label: 'Epidural', short: 'Epidural', p0: 0.1, p1: 0.25, maxAttempts: 2 },
-  { id: 'mixto', label: 'Bloqueo mixto', short: 'Mixto', p0: 0.1, p1: 0.25, maxAttempts: 2 },
-  { id: 'arterial', label: 'Acceso arterial', short: 'Línea arterial', p0: 0.15, p1: 0.3, maxAttempts: 2, highRisk: true },
-  { id: 'cvc', label: 'Catéter venoso central', short: 'CVC', p0: 0.1, p1: 0.25, maxAttempts: 2, highRisk: true },
-  { id: 'periferico', label: 'Bloqueo periférico', short: 'Bloqueo periférico', p0: 0.15, p1: 0.3, maxAttempts: 2, needsLabel: true },
-  { id: 'otro', label: 'Otro', short: 'Otro', p0: 0.15, p1: 0.3, maxAttempts: 2, needsLabel: true },
-]
+export const PROCEDURES = PROC_CONFIG.procedimientos as ProcedureDef[]
 
 export const procDef = (id: ProcedureType) => PROCEDURES.find((p) => p.id === id)!
+
+/** Los 10 procedimientos del protocolo (sin "Otro") */
+export const PROTOCOL_PROCEDURES = PROCEDURES.filter((p) => !p.fueraDeProtocolo)
+
+/** ¿Tiene curva CUSUM? Solo los activos con parámetros publicados */
+export const hasCurve = (d: ProcedureDef): d is ProcedureDef & { p0: number; p1: number } =>
+  d.estado === 'activo' && d.p0 !== null && d.p1 !== null
+
+export const LOGRO: Record<LogroKey, { question: string; hint?: string; ok: string; fail: string; inverted?: boolean }> = {
+  // inverted: la pregunta es negativa, "Sí" = el criterio NO se cumplió
+  sinDesaturacion: { question: '¿Hubo desaturación (SpO₂ < 90%)?', ok: 'Sin desaturación', fail: 'Con desaturación', inverted: true },
+  bloqueoFuncional: { question: '¿El bloqueo fue funcional?', hint: 'Funcional = no requirió más que sedación consciente', ok: 'Bloqueo funcional', fail: 'Bloqueo no funcional' },
+  transduccion: { question: '¿Se logró una transducción adecuada?', ok: 'Transducción adecuada', fail: 'Sin transducción adecuada' },
+  retornoVenoso: { question: '¿Se confirmó el retorno venoso?', ok: 'Retorno venoso confirmado', fail: 'Sin retorno venoso confirmado' },
+}
+
+/** Criterios de éxito en texto, para mostrarlos donde se registra y donde se grafica */
+export function criteriaText(d: ProcedureDef): string[] {
+  const c = d.criterios
+  const unit = d.id === 'arterial' || d.id === 'cvc' ? 'punciones' : 'intentos'
+  const out = [`${c.maxIntentos} ${unit} o menos`, c.maxTiempo === '<5' ? 'menos de 5 min' : '10 min o menos']
+  if (c.ayudaMax !== null) out.push(c.ayudaMax === 0 ? 'sin ayuda' : 'ayuda ninguna o solo verbal')
+  if (c.logro) out.push(LOGRO[c.logro].ok.toLowerCase())
+  out.push('sin que el adscrito tome el control (O-SCORE 1 o relevo = fallo)')
+  return out
+}
 
 export const ATTEMPT_TIMES: { id: AttemptTime; label: string }[] = [
   { id: '<5', label: '< 5 min' },
@@ -83,7 +123,7 @@ export const HELP: { id: HelpLevel; label: string; resident: string }[] = [
 export const INCIDENT_OTHER = 'Otro'
 
 export const INCIDENTS = [
-  'Desaturación < 90%',
+  // La desaturación se pregunta aparte (criterio de logro de la vía aérea)
   'Intubación esofágica',
   'Trauma dental / vía aérea',
   'Broncoaspiración',
@@ -101,21 +141,28 @@ export const INCIDENTS = [
 
 // ───────────────────────── Escalas ─────────────────────────
 
-/** O-SCORE: es por procedimiento */
+/**
+ * O-SCORE (Gofton 2012; Tavares 2022): juicio RETROSPECTIVO de supervisión, por procedimiento.
+ * Anclas traducidas del original ("I had to do", "talk them through", "prompt them from time to time",
+ * "be there just in case", "I did not need to be there"). POR REVISAR contra el Anexo 10 del Programa.
+ */
 export const SUPERVISION = [
-  { v: 1, short: 'Lo hice yo', text: 'Tuve que hacer yo la mayor parte del procedimiento' },
-  { v: 2, short: 'Paso a paso', text: 'Tuve que dirigirlo paso a paso / intervenir frecuentemente' },
-  { v: 3, short: 'Indicaciones ocasionales', text: 'Pudo realizarlo con indicaciones ocasionales y supervisión directa' },
-  { v: 4, short: 'Solo "por si acaso"', text: 'Pudo realizarlo con supervisión de respaldo; solo estuve disponible "por si acaso"' },
-  { v: 5, short: 'Independiente', text: 'Pudo realizarlo de forma independiente y segura' },
+  { v: 1, short: 'Tuve que hacerlo yo', text: 'Tuve que hacerlo yo' },
+  { v: 2, short: 'Lo guié paso a paso', text: 'Tuve que guiarlo paso a paso' },
+  { v: 3, short: 'Le indiqué de vez en cuando', text: 'Tuve que indicarle de vez en cuando' },
+  { v: 4, short: 'Solo por si acaso', text: 'Necesité estar presente solo por si acaso' },
+  { v: 5, short: 'No necesité estar', text: 'No necesité estar presente' },
 ] as const
 
-/** Entrustment: es por caso */
+/**
+ * Escala de confiabilidad (entrustment; ten Cate 2018, Dubois 2021): juicio PROSPECTIVO, por caso.
+ * Niveles sin traslape. POR CONFIRMAR con enseñanza.
+ */
 export const ENTRUSTMENT = [
-  { v: 1, short: 'Supervisión estrecha', text: 'Aún no atender un caso así sin supervisión directa estrecha' },
-  { v: 2, short: 'Directa proactiva', text: 'Atenderlo con supervisión directa proactiva' },
-  { v: 3, short: 'Indirecta reactiva', text: 'Atenderlo con supervisión indirecta reactiva' },
-  { v: 4, short: 'Sin supervisión inmediata', text: 'Atenderlo sin supervisión inmediata' },
+  { v: 1, short: 'Solo observar', text: 'Aún no debe realizarlo: solo observar, aunque haya supervisión' },
+  { v: 2, short: 'Supervisión directa', text: 'Realizarlo con supervisión directa: el adscrito en la sala' },
+  { v: 3, short: 'Supervisión indirecta', text: 'Realizarlo con supervisión indirecta: el adscrito disponible de inmediato' },
+  { v: 4, short: 'Sin supervisión', text: 'Realizarlo sin supervisión (revisión posterior)' },
   { v: 5, short: 'Puede supervisar', text: 'Supervisar a un residente menor en un caso similar' },
 ] as const
 
@@ -189,21 +236,22 @@ export const GRADE_EXPECTATIONS: Record<Grade, string[]> = {
   R3: ['Autonomía supervisada', 'Manejo de casos complejos', 'Liderazgo', 'Enseñanza a R menores', 'Participación académica / investigación'],
 }
 
-// Umbrales dictados por enseñanza. "Más de 3" se interpreta como ≥ 3 (las escalas son enteras).
+// Umbrales de referencia por grado: viven en src/config/umbrales.json. PROVISIONALES (fuente futura:
+// Delphi). Solo orientan una lectura formativa ("revisar en la sesión trimestral"), no califican.
+// ANTS es solo formativo: no tiene umbral.
 
-/** O-SCORE mínimo esperado por procedimiento: R1 ≥ 3 · R2 y R3 ≥ 4 */
-export const OSCORE_TARGET: Record<Grade, number> = { R1: 3, R2: 4, R3: 4 }
-/** Técnicas de mayor riesgo (arterias, catéteres, intubación difícil): R1 entre 2 y 3 · R2 y R3 ≥ 4 */
-export const OSCORE_TARGET_HIGH_RISK: Record<Grade, number> = { R1: 2, R2: 4, R3: 4 }
+type ByGrade = Record<Grade, number>
+
+/** O-SCORE de referencia por procedimiento */
+export const OSCORE_TARGET = UMBRALES.oscore as ByGrade
+/** Técnicas de mayor riesgo (arterias, catéteres, intubación difícil) */
+export const OSCORE_TARGET_HIGH_RISK = UMBRALES.oscoreAltoRiesgo as ByGrade
 
 export const oscoreTarget = (grade: Grade, type?: ProcedureType) =>
-  type && procDef(type).highRisk ? OSCORE_TARGET_HIGH_RISK[grade] : OSCORE_TARGET[grade]
+  type && procDef(type).altoRiesgo ? OSCORE_TARGET_HIGH_RISK[grade] : OSCORE_TARGET[grade]
 
-/** ANTS: lo ideal es ≥ 3 en todos los dominios, en todos los grados */
-export const ANTS_TARGET: Record<Grade, number> = { R1: 3, R2: 3, R3: 3 }
+/** Entrustment de referencia: R1 llega a supervisión indirecta (3); R2 y R3, sin supervisión (4) */
+export const ENTRUSTMENT_TARGET = UMBRALES.entrustment as ByGrade
 
-/**
- * Entrustment esperado: el R1 llega a supervisión indirecta (3); R2 y R3, sin supervisión (4).
- * POR CONFIRMAR: interpretación de la nota de enseñanza.
- */
-export const ENTRUSTMENT_TARGET: Record<Grade, number> = { R1: 3, R2: 4, R3: 4 }
+/** Días tras los cuales un registro sin validar genera recordatorio */
+export const REMINDER_DAYS = UMBRALES.diasRecordatorioSinValidar

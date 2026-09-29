@@ -83,6 +83,8 @@ export default function CaseDetail() {
               </span>
             ) : c.status === 'no-evaluable' ? (
               <span className="badge">No evaluable</span>
+            ) : c.status === 'rechazado' ? (
+              <span className="badge crit">Rechazado</span>
             ) : (
               <span className="badge good">Evaluado</span>
             )}
@@ -156,7 +158,19 @@ export default function CaseDetail() {
         </div>
 
         {/* ───── Lo que puso quien evaluó ───── */}
-        {c.status === 'no-evaluable' ? (
+        {c.status === 'rechazado' ? (
+          <>
+            <div className="h2">Evaluación</div>
+            <div className="card flat" style={{ background: 'var(--crit-soft)', border: 0 }}>
+              <div className="small bold" style={{ color: '#a32424' }}>
+                Registro rechazado por {c.rejection ? userById(c.rejection.attendingId).short : 'el adscrito'}
+              </div>
+              <div className="small ink2" style={{ marginTop: 4 }}>
+                {c.rejection?.reason} · No cuenta para curvas, tasas ni reportes. Se avisó a los profesores.
+              </div>
+            </div>
+          </>
+        ) : c.status === 'no-evaluable' ? (
           <>
             <div className="h2">Evaluación</div>
             <div className="card flat" style={{ background: 'var(--crit-soft)', border: 0 }}>
@@ -202,22 +216,28 @@ export default function CaseDetail() {
               <span className="tiny muted">{e.durationSec ? `${fmtDuration(e.durationSec)} min` : ''}</span>
             </div>
             <div className="hero-card">
-              <div className="muted tiny bold">O-SCORE POR PROCEDIMIENTO</div>
+              <div className="muted tiny bold">O-SCORE POR PROCEDIMIENTO · JUICIO RETROSPECTIVO</div>
               <div className="stack mt8">
                 {c.procedures.map((p) => (
                   <div key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,.14)', paddingBottom: 8 }}>
                     <div className="tiny muted">{procLabel(p)}</div>
-                    <div className="row" style={{ alignItems: 'flex-start' }}>
-                      <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>{e.supervision[p.id]}</div>
-                      <div className="small" style={{ marginTop: 4 }}>
-                        {SUPERVISION[e.supervision[p.id] - 1].text}
+                    {e.supervision[p.id] ? (
+                      <div className="row" style={{ alignItems: 'flex-start' }}>
+                        <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>{e.supervision[p.id]}</div>
+                        <div className="small" style={{ marginTop: 4 }}>
+                          {SUPERVISION[e.supervision[p.id] - 1].text}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="small" style={{ marginTop: 4 }}>
+                        El adscrito no presenció este procedimiento: no se validó.
+                      </div>
+                    )}
                   </div>
                 ))}
                 {!c.procedures.length && <div className="small muted">Caso sin procedimientos registrados.</div>}
               </div>
-              <div className="muted tiny bold mt16">ENTRUSTMENT DEL CASO</div>
+              <div className="muted tiny bold mt16">CONFIABILIDAD DEL CASO · JUICIO PROSPECTIVO</div>
               <div className="row mt8" style={{ alignItems: 'flex-start' }}>
                 <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>{e.entrustment}</div>
                 <div className="small">{ENTRUSTMENT[e.entrustment - 1].text}</div>
@@ -241,7 +261,7 @@ export default function CaseDetail() {
               )}
             </div>
 
-            <ScoreList title="Habilidades no técnicas (ANTS)" items={ANTS_ITEMS} values={e.ants} max={4} />
+            <ScoreList title="Habilidades no técnicas (ANTS) · formativo" items={ANTS_ITEMS} values={e.ants} max={4} />
             <ScoreList title="Mini-CEX" items={MINICEX_ITEMS} values={e.miniCex} max={5} />
 
             <div className="h2">Cierre</div>

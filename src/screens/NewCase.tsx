@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, Pencil, Plus, ShieldAlert, Trash2 } from 'lucide-react'
 import { newId, useStore } from '../store'
@@ -36,20 +36,55 @@ export default function NewCase() {
   const nav = useNavigate()
   const me = user!
   const startedAt = useRef(Date.now())
-  const [step, setStep] = useState(0)
+  const [step, setStep] = useState(() => {
+    try {
+      return (JSON.parse(localStorage.getItem(`pulso:borrador:${user!.id}`) ?? 'null') as { step: number } | null)?.step ?? 0
+    } catch {
+      return 0
+    }
+  })
   const [proc, setProc] = useState<ProcedureRecord | 'new' | null>(null)
-  const [f, setF] = useState<Form>(() => ({
-    date: todayISO(),
-    // Hora y jornada las pone el residente (sin valor por defecto): se van a comparar guardias vs. ordinaria
-    startTime: '',
-    comorbidities: [],
-    usualForGrade: true,
-    criticalEvent: false,
-    criticalEventNote: '',
-    procedures: [],
-    residentReflection: '',
-    residentNote: '',
-  }))
+  const draftKey = `pulso:borrador:${me.id}`
+  // Si se fue la conexión o se cerró la pantalla, se recupera lo que llevaba capturado
+  const [restored] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(draftKey) ?? 'null') as { f: Form; step: number } | null
+    } catch {
+      return null
+    }
+  })
+  const [f, setF] = useState<Form>(
+    () =>
+      restored?.f ?? {
+        date: todayISO(),
+        // Hora y jornada las pone el residente (sin valor por defecto): se van a comparar guardias vs. ordinaria
+        startTime: '',
+        comorbidities: [],
+        usualForGrade: true,
+        criticalEvent: false,
+        criticalEventNote: '',
+        procedures: [],
+        residentReflection: '',
+        residentNote: '',
+      },
+  )
+  useEffect(() => {
+    const touched = !!(f.area || f.startTime || f.shift || f.attendingId !== undefined || f.procedures.length || f.residentReflection)
+    if (!touched) return
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ f, step }))
+    } catch {
+      /* sin almacenamiento: no se puede guardar el borrador */
+    }
+  }, [draftKey, f, step])
+  const discardDraft = () => {
+    try {
+      localStorage.removeItem(draftKey)
+    } catch {
+      /* ignore */
+    }
+  }
+  const [draftDismissed, setDraftDismissed] = useState(false)
   const up = (p: Partial<Form>) => setF((x) => ({ ...x, ...p }))
   const name = STEPS[step]
   const caseNo = useMemo(() => cases.filter((c) => c.residentId === me.id && c.date === f.date).length + 1, [cases, me.id, f.date])
@@ -88,6 +123,7 @@ export default function NewCase() {
       status: noAttending ? 'no-evaluable' : 'pendiente',
     }
     saveCase(c)
+    discardDraft()
     nav(`/r/enviado/${c.id}`, { replace: true, state: { secs: Math.round((Date.now() - startedAt.current) / 1000) } })
   }
 
@@ -99,7 +135,6 @@ export default function NewCase() {
           <ProcedureFlow
             initial={proc === 'new' ? undefined : proc}
             perspective="residente"
-            grade={me.grade!}
             noAttending={noAttending}
             usedTypes={f.procedures.map((p) => p.type)}
             onCancel={() => setProc(null)}
@@ -123,6 +158,23 @@ export default function NewCase() {
       </div>
 
       <div className="screen no-tabs" key={name}>
+        {restored && !draftDismissed && (
+          <div className="card flat row" style={{ background: 'var(--accent-soft)', border: 0, marginBottom: 12 }}>
+            <div className="grow small">Recuperamos tu registro sin enviar.</div>
+            <button
+              className="btn sm ghost"
+              onClick={() => {
+                discardDraft()
+                nav('/r', { replace: true })
+              }}
+            >
+              Descartar
+            </button>
+            <button className="btn sm" onClick={() => setDraftDismissed(true)}>
+              Seguir
+            </button>
+          </div>
+        )}
         {name === 'Identificación' && (
           <div className="question">
             <div className="q-title">¿Dónde y con quién?</div>
@@ -260,7 +312,7 @@ export default function NewCase() {
             <div className="stack">
               {f.procedures.map((p) => (
                 <div key={p.id} className="card tight">
-                  <ProcLine p={p} c={{ grade: me.grade!, attendingId: f.attendingId ?? null }} />
+                  <ProcLine p={p} c={{ status: 'pendiente', attendingId: f.attendingId ?? null }} />
                   <div className="row mt8" style={{ justifyContent: 'flex-end' }}>
                     <button className="btn sm ghost" onClick={() => up({ procedures: f.procedures.filter((x) => x.id !== p.id) })}>
                       <Trash2 size={15} /> Quitar
@@ -296,7 +348,7 @@ export default function NewCase() {
               {f.procedures.length > 0 && (
                 <div className="stack mt12" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                   {f.procedures.map((p) => (
-                    <ProcLine key={p.id} p={p} c={{ grade: me.grade!, attendingId: f.attendingId ?? null }} compact />
+                    <ProcLine key={p.id} p={p} c={{ status: 'pendiente', attendingId: f.attendingId ?? null }} compact />
                   ))}
                 </div>
               )}

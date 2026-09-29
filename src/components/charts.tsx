@@ -2,6 +2,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import type { CusumResult } from '../lib/cusum'
 import { fmtDate } from '../lib/dates'
+import { SMALL_N, pct, wilson } from '../lib/success'
 
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null)
@@ -176,11 +177,11 @@ export function CusumChart({ result, height = 220 }: { result: CusumResult; heig
         {/* líneas de decisión */}
         <line x1={m.l} x2={m.l + iw} y1={Y(result.h1)} y2={Y(result.h1)} stroke="var(--crit)" strokeWidth={1.5} strokeDasharray="5 4" />
         <text x={m.l + iw} y={Y(result.h1) - 5} textAnchor="end" style={{ fill: '#a32424', fontWeight: 600 }}>
-          Límite inaceptable
+          H1 · inaceptable
         </text>
         <line x1={m.l} x2={m.l + iw} y1={Y(result.h0)} y2={Y(result.h0)} stroke="var(--good)" strokeWidth={1.5} strokeDasharray="5 4" />
         <text x={m.l + iw} y={Y(result.h0) + 13} textAnchor="end" style={{ fill: 'var(--good-ink)', fontWeight: 600 }}>
-          Límite aceptable
+          H0 · estándar
         </text>
         {result.competentAt && (
           <g>
@@ -191,7 +192,7 @@ export function CusumChart({ result, height = 220 }: { result: CusumResult; heig
               style={{ fill: 'var(--good-ink)', fontWeight: 600 }}
               textAnchor={X(result.competentAt) < m.l + 110 ? 'start' : 'end'}
             >
-              Competencia · #{result.competentAt}
+              Estándar · #{result.competentAt}
             </text>
           </g>
         )}
@@ -211,7 +212,7 @@ export function CusumChart({ result, height = 220 }: { result: CusumResult; heig
           <div className="bold">
             #{hp.n} · {fmtDate(hp.date)}
           </div>
-          {hp.grade} · {hp.fail ? 'Falla' : 'Éxito'} · CUSUM {hp.value.toFixed(2)}
+          {hp.grade} · {hp.fail ? 'Fallo' : 'Éxito'} · CUSUM {hp.value.toFixed(2)}
         </div>
       )}
     </div>
@@ -281,4 +282,58 @@ export function StackedBar({ parts }: { parts: { label: string; value: number; c
       </div>
     </div>
   )
+}
+
+// ─────────────────────────── Tasa de éxito con intervalo de confianza ───────────────────────────
+
+/** Una barra por fila: % de éxito, intervalo de confianza al 95% (Wilson) y n. Aviso si n < 30. */
+export function RateBars({ rows, unit = 'intentos' }: { rows: { label: string; ok: number; n: number }[]; unit?: string }) {
+  if (!rows.length) return <div className="small muted">Sin intentos validados.</div>
+  return (
+    <div className="stack">
+      {rows.map((r) => {
+        const [lo, hi] = wilson(r.ok, r.n)
+        return (
+          <div key={r.label}>
+            <div className="row between small">
+              <span className="ink2" style={{ fontWeight: 600 }}>
+                {r.label}
+              </span>
+              <span className="num">
+                <b>{pct(r.ok / r.n)}</b>{' '}
+                <span className="tiny muted">
+                  IC95% {Math.round(lo * 100)}–{Math.round(hi * 100)}% · n={r.n}
+                  {r.n < SMALL_N && ' ⚠'}
+                </span>
+              </span>
+            </div>
+            <div className="bar-track" style={{ marginTop: 5 }}>
+              <div className="bar-fill" style={{ width: `${(r.ok / r.n) * 100}%`, opacity: r.n < SMALL_N ? 0.55 : 1 }} />
+              <div className="bar-ci" style={{ left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` }} title="Intervalo de confianza al 95%" />
+            </div>
+          </div>
+        )
+      })}
+      <div className="tiny muted">
+        n = número de {unit}. Barra = % de éxito; línea = intervalo de confianza al 95% (Wilson). ⚠ n menor de {SMALL_N}: el porcentaje es poco estable y una diferencia
+        entre filas puede ser solo variación.
+      </div>
+    </div>
+  )
+}
+
+/** Agrupa una secuencia de intentos en bloques (1–5, 6–10…) */
+export function blocks(seqs: boolean[][], size = 5, maxBlocks = 10) {
+  const out: { ok: number; n: number }[] = []
+  seqs.forEach((fails) =>
+    fails.forEach((fail, k) => {
+      const b = Math.min(Math.floor(k / size), maxBlocks - 1)
+      out[b] ??= { ok: 0, n: 0 }
+      out[b].n++
+      if (!fail) out[b].ok++
+    }),
+  )
+  return out
+    .map((b, i) => (b ? { label: `Intentos ${i === maxBlocks - 1 ? `${i * size + 1}+` : `${i * size + 1}–${i * size + size}`}`, ...b } : null))
+    .filter((b): b is { label: string; ok: number; n: number } => !!b && b.n > 0)
 }

@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Info, TrendingDown } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Info, TrendingDown, WifiOff } from 'lucide-react'
 import { initials } from '../data/users'
 import type { Alert } from '../lib/stats'
 import type { CusumState } from '../lib/cusum'
@@ -225,14 +225,36 @@ export function Kpi({ label, value, delta, good, hint }: { label: string; value:
   )
 }
 
-export function CusumBadge({ state }: { state: CusumState }) {
-  const cls = state === 'competente' ? 'good' : state === 'alerta' ? 'crit' : state === 'curva' ? 'brand' : ''
-  const Icon = state === 'competente' ? CheckCircle2 : state === 'alerta' ? CircleAlert : null
+export function CusumBadge({ state }: { state: CusumState | 'calibracion' }) {
+  if (state === 'calibracion') return <span className="badge">En calibración</span>
+  const cls = state === 'estandar' ? 'good' : state === 'alerta' ? 'warn' : state === 'curva' ? 'brand' : ''
+  const Icon = state === 'estandar' ? CheckCircle2 : state === 'alerta' ? CircleAlert : null
   return (
     <span className={`badge ${cls}`}>
       {Icon && <Icon size={12} />}
-      {state === 'curva' ? 'En curva' : state === 'competente' ? 'Competente' : state === 'alerta' ? 'Alerta' : CUSUM_STATE_LABEL[state]}
+      {CUSUM_STATE_LABEL[state]}
     </span>
+  )
+}
+
+/** Aviso cuando el teléfono pierde la conexión: lo capturado se conserva en el dispositivo */
+export function OfflineBanner() {
+  const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
+  }, [])
+  if (online) return null
+  return (
+    <div className="offline-banner" role="status">
+      <WifiOff size={14} /> Sin conexión: lo que captures se guarda en este teléfono.
+    </div>
   )
 }
 

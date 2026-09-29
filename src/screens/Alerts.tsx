@@ -11,8 +11,10 @@ const SECTIONS: { kind: Alert['kind']; title: string; hint: string }[] = [
   { kind: 'evento-critico', title: 'Eventos críticos', hint: 'Reportados por el residente al registrar el caso' },
   { kind: 'riesgo', title: 'Riesgo para el paciente', hint: 'Reportado por el adscrito que evaluó' },
   { kind: 'revision', title: 'Ameritan revisión', hint: 'Quedan fuera de las gráficas hasta que un profesor decida si se incluyen' },
-  { kind: 'cusum', title: 'Caídas de desempeño (CUSUM)', hint: 'La curva cruzó el límite inaceptable' },
-  { kind: 'desempeno', title: 'Por debajo de lo esperado', hint: 'O-SCORE promedio de los últimos 10 casos contra el umbral del grado' },
+  { kind: 'rechazo', title: 'Registros rechazados', hint: 'El adscrito indicó que el registro no corresponde; no cuenta para nada' },
+  { kind: 'cusum', title: 'Alertas formativas de curva (CUSUM)', hint: 'Arriba del límite superior pasado el periodo de gracia: proponer acompañamiento. En R1 es más esperable' },
+  { kind: 'desempeno', title: 'Para la sesión trimestral', hint: 'O-SCORE de los últimos 10 casos debajo de la referencia provisional del grado (solo O-SCORE; ANTS no cuenta)' },
+  { kind: 'sin-validar', title: 'Registros sin validar', hint: 'Llevan más del plazo configurado esperando al adscrito' },
 ]
 
 export default function Alerts() {

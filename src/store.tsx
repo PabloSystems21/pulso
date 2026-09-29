@@ -6,8 +6,8 @@ import { byDate } from './lib/stats'
 
 // Sin backend: el historial se genera en memoria y solo lo que el usuario crea/cambia
 // se guarda en localStorage. "Reiniciar demo" lo borra.
-const DATA_KEY = 'pulso:data:v3'
-const USER_KEY = 'pulso:user:v3'
+const DATA_KEY = 'pulso:data:v4'
+const USER_KEY = 'pulso:user:v4'
 
 /**
  * DEMO: el login acepta cualquier contraseña (el formulario viene prellenado).

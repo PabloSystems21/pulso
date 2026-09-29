@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Printer } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Printer } from 'lucide-react'
 import { useStore } from '../store'
 import type { Grade, ProcedureType } from '../types'
 import { RESIDENTS, USERS, userById } from '../data/users'
-import { ANTS_DOMAINS, ANTS_TARGET, OSCORE_TARGET, PROCEDURES, SHIFTS, SUPERVISION, procDef } from '../data/catalog'
-import { antsDomains, avg, caseSupervision, casesOf, chartCases, countsForCusum, cusumItems, failsFor } from '../lib/stats'
-import { isCusumFailure } from '../lib/cusum'
+import { ANTS_DOMAINS, OSCORE_TARGET, PROTOCOL_PROCEDURES, SHIFTS, SUPERVISION, procDef } from '../data/catalog'
+import { antsDomains, attemptsOf, avg, caseSupervision, casesOf, chartCases, counts, outcomeOf } from '../lib/stats'
+import { SMALL_N, rateText } from '../lib/success'
+import { exportAggregate, exportResearch } from '../lib/export'
 import { fmtDuration, monthLong } from '../lib/dates'
 import { Kpi, TopBar } from '../components/ui'
-import { DomainBars, ORDINAL_BLUE, StackedBar } from '../components/charts'
+import { DomainBars, ORDINAL_BLUE, RateBars, StackedBar, blocks } from '../components/charts'
 
 type Period = 'mes' | 'trimestre'
 
@@ -52,44 +53,36 @@ export default function Reports() {
     value: ev.flatMap((c) => Object.values(c.evaluation.supervision)).filter((x) => x === v).length,
     color: ORDINAL_BLUE[v - 1],
   }))
-  const procRows = PROCEDURES.filter((p) => p.id !== 'otro')
-    .map((def) => {
-      const list = inP.flatMap((c) => c.procedures.filter((p) => p.type === def.id && countsForCusum(p, c)).map((p) => ({ p, c })))
-      const ok = list.filter(({ p, c }) => !failsFor(p, c)).length
-      return { def, n: list.length, rate: list.length ? ok / list.length : 0 }
-    })
+  // Tasa de éxito = éxitos / intentos validados (no es la curva CUSUM)
+  const procRows = PROTOCOL_PROCEDURES.map((def) => {
+    const list = inP.flatMap((c) => c.procedures.filter((p) => p.type === def.id && counts(p, c)).map((p) => ({ p, c })))
+    const ok = list.filter(({ p, c }) => outcomeOf(p, c).status === 'exito').length
+    return { def, n: list.length, ok }
+  })
     .filter((r) => r.n > 0)
     .sort((a, b) => b.n - a.n)
   const noAttending = inP.filter((c) => !c.attendingId).length
   // ¿Cambia el desempeño en complementaria (vespertino/guardia: más cansancio, menos vigilancia)?
   const byShift = SHIFTS.map((sh) => {
     const cs = inP.filter((c) => c.shift === sh.id)
-    const procs = cs.flatMap((c) => c.procedures.filter((p) => countsForCusum(p, c)).map((p) => ({ p, c })))
+    const procs = cs.flatMap((c) => c.procedures.filter((p) => counts(p, c)).map((p) => ({ p, c })))
     return {
       sh,
       n: cs.length,
       oscore: avg(chartCases(cs).map((c) => caseSupervision(c.evaluation))),
       procs: procs.length,
-      rate: procs.length ? procs.filter(({ p, c }) => !failsFor(p, c)).length / procs.length : null,
+      ok: procs.filter(({ p, c }) => outcomeOf(p, c).status === 'exito').length,
       critical: cs.filter((c) => c.criticalEvent).length,
     }
   })
 
-  // Curva de la sede: todos los residentes del hospital, por número de intento acumulado.
-  // Se usa la definición estricta de éxito (la de R2/R3) para que sea comparable entre grados.
-  const site = useMemo(() => {
-    const def = procDef(siteProc)
-    const buckets: { ok: number; n: number }[] = []
-    USERS.filter((u) => u.role === 'residente').forEach((u) => {
-      cusumItems(casesOf(cases, u.id), siteProc).forEach((it, k) => {
-        const b = Math.min(Math.floor(k / 5), 9)
-        buckets[b] ??= { ok: 0, n: 0 }
-        buckets[b].n++
-        if (!isCusumFailure(it.proc, def, 'R2', it.oscore)) buckets[b].ok++
-      })
-    })
-    return buckets.map((b, i) => ({ label: i === 9 ? '46+' : `${i * 5 + 1}–${i * 5 + 5}`, ...b })).filter((b) => b && b.n)
-  }, [cases, siteProc])
+  // Curva de aprendizaje por bloques de intentos: todos los residentes del hospital (la sede), según
+  // el número de intento de cada uno. Descriptiva; no es la curva CUSUM.
+  const siteRows = useMemo(
+    () => blocks(USERS.filter((u) => u.role === 'residente').map((u) => attemptsOf(casesOf(cases, u.id), siteProc).map((a) => a.fail))),
+    [cases, siteProc],
+  )
+  const pendingValidation = inP.filter((c) => c.status === 'pendiente').length
   const risks = ev.filter((c) => c.evaluation.patientRisk).length
   const reviews = ev.filter((c) => c.evaluation.needsProfessorReview).length
   const themes = Object.entries(
@@ -146,8 +139,8 @@ export default function Reports() {
         </div>
 
         <div className="grid2 mt12">
-          <Kpi label="Casos registrados" value={inP.length} hint={`${ev.length} ya evaluados`} />
-          <Kpi label="O-SCORE medio" value={sup?.toFixed(2) ?? '—'} hint={`Esperado ≥ ${lo.toFixed(1)}`} />
+          <Kpi label="Casos registrados" value={inP.length} hint={`${ev.length} validados · ${pendingValidation} por validar`} />
+          <Kpi label="O-SCORE medio" value={sup?.toFixed(2) ?? '—'} hint={`Referencia provisional ≥ ${lo}`} />
           <Kpi label="Tiempo por evaluación" value={durations ? fmtDuration(durations) : '—'} hint="min promedio" />
           <Kpi label="Casos sin adscrito" value={noAttending} hint="requieren revisión" />
         </div>
@@ -160,7 +153,7 @@ export default function Reports() {
                 <th>Residente</th>
                 <th className="r">Casos</th>
                 <th className="r">O-SCORE</th>
-                <th className="r">ANTS</th>
+                <th className="r">ANTS*</th>
                 <th className="r">Estado</th>
               </tr>
             </thead>
@@ -179,7 +172,7 @@ export default function Reports() {
                     <td className="r num">{inP.filter((c) => c.residentId === r.id).length}</td>
                     <td className="r num">{s?.toFixed(1) ?? '—'}</td>
                     <td className="r num">{a?.toFixed(1) ?? '—'}</td>
-                    <td className="r">{s !== null && s < lo ? <span className="badge warn">Bajo</span> : <span className="badge good">En rango</span>}</td>
+                    <td className="r">{s !== null && s < lo ? <span className="badge warn">Revisar</span> : <span className="badge good">En rango</span>}</td>
                   </tr>
                 )
               })}
@@ -192,39 +185,54 @@ export default function Reports() {
               )}
             </tbody>
           </table>
+          <div className="tiny muted mt8">
+            Estado = O-SCORE promedio contra la referencia provisional del grado; "Revisar" significa llevarlo a la sesión trimestral, no una calificación. *ANTS es solo
+            formativo: no cuenta para el estado.
+          </div>
         </div>
 
         <div className="h2">Distribución del O-SCORE</div>
         <div className="card">
           <StackedBar parts={dist} />
-          <div className="tiny muted mt8">Cada procedimiento evaluado cuenta como un dato.</div>
+          <div className="tiny muted mt8">Cada procedimiento validado cuenta como un dato.</div>
         </div>
 
         <div className="h2">ANTS del grado</div>
         <div className="card">
-          <DomainBars rows={ANTS_DOMAINS.map((d) => ({ label: d.label, value: dom[d.id] }))} max={4} target={ANTS_TARGET[grade]} />
+          <DomainBars rows={ANTS_DOMAINS.map((d) => ({ label: d.label, value: dom[d.id] }))} max={4} />
+          <div className="tiny muted mt8">Referencia formativa, sin umbral: no cuenta para el estado ni dispara alertas.</div>
         </div>
 
-        <div className="h2">Procedimientos del periodo</div>
-        <div className="card">
+        <div className="h2">Tasa de éxito por procedimiento</div>
+        <div className="card" style={{ overflowX: 'auto' }}>
           <table className="data">
             <thead>
               <tr>
                 <th>Procedimiento</th>
-                <th className="r">N</th>
-                <th className="r">Éxito CUSUM</th>
+                <th className="r">n</th>
+                <th className="r">Tasa de éxito (IC95%)</th>
               </tr>
             </thead>
             <tbody>
               {procRows.map((r) => (
                 <tr key={r.def.id}>
-                  <td>{procDef(r.def.id).short}</td>
+                  <td>
+                    {procDef(r.def.id).short}
+                    {r.def.estado === 'calibracion' && <div className="tiny muted">En calibración</div>}
+                  </td>
                   <td className="r num">{r.n}</td>
-                  <td className="r num">{Math.round(r.rate * 100)}%</td>
+                  <td className="r num">
+                    {rateText(r.ok, r.n)}
+                    {r.n > 0 && r.n < SMALL_N && ' ⚠'}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div className="tiny muted mt8">
+            n = intentos validados por el adscrito (como primer operador). Tasa de éxito = éxitos / n, con los criterios de cada procedimiento. ⚠ n menor de {SMALL_N}: porcentaje
+            poco estable.
+          </div>
         </div>
 
         <div className="h2">Por jornada</div>
@@ -235,7 +243,7 @@ export default function Reports() {
                 <th>Jornada</th>
                 <th className="r">Casos</th>
                 <th className="r">O-SCORE</th>
-                <th className="r">Éxito CUSUM</th>
+                <th className="r">Tasa de éxito</th>
                 <th className="r">Ev. crít.</th>
               </tr>
             </thead>
@@ -248,13 +256,16 @@ export default function Reports() {
                   </td>
                   <td className="r num">{r.n}</td>
                   <td className="r num">{r.oscore?.toFixed(1) ?? '—'}</td>
-                  <td className="r num">{r.rate === null ? '—' : `${Math.round(r.rate * 100)}%`}</td>
+                  <td className="r num">
+                    {rateText(r.ok, r.procs)}
+                    <div className="tiny muted">n={r.procs}</div>
+                  </td>
                   <td className="r num">{r.critical}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="tiny muted mt8">La jornada la marca el residente al registrar el caso. Sirve para ver si en complementaria (vespertino o guardia) cambia la curva.</div>
+          <div className="tiny muted mt8">La jornada la marca el residente al registrar el caso. Sirve para ver si en complementaria (vespertino o guardia) cambia el desempeño. n = intentos validados.</div>
         </div>
 
         <div className="h2">Prioridades de mejora más frecuentes</div>
@@ -267,36 +278,21 @@ export default function Reports() {
           ))}
         </div>
 
-        <div className="h2">Curva de la sede · todo el hospital</div>
+        <div className="h2">Curva de aprendizaje por bloques de intentos · toda la sede</div>
         <div className="card">
           <select className="input" value={siteProc} onChange={(e) => setSiteProc(e.target.value as ProcedureType)} aria-label="Procedimiento">
-            {PROCEDURES.filter((p) => p.id !== 'otro').map((p) => (
+            {PROTOCOL_PROCEDURES.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
               </option>
             ))}
           </select>
-          <div className="stack mt12">
-            {site.map((b) => (
-              <div key={b.label}>
-                <div className="row between small">
-                  <span className="ink2" style={{ fontWeight: 600 }}>
-                    Intentos {b.label}
-                  </span>
-                  <span className="num">
-                    <b>{Math.round((b.ok / b.n) * 100)}%</b> <span className="tiny muted">n={b.n}</span>
-                  </span>
-                </div>
-                <div className="bar-track" style={{ marginTop: 5 }}>
-                  <div className="bar-fill" style={{ width: `${(b.ok / b.n) * 100}%` }} />
-                </div>
-              </div>
-            ))}
-            {!site.length && <div className="small muted">Sin registros de este procedimiento.</div>}
+          <div className="mt12">
+            <RateBars rows={siteRows} unit="intentos validados de todos los residentes en ese bloque" />
           </div>
-          <div className="tiny muted mt12" style={{ lineHeight: 1.5 }}>
-            % de éxito según el número de intento de cada residente (1º–5º, 6º–10º…), con toda la residencia. Es descriptiva: con ella se van a definir los cortes propios de
-            la CUSUM (a partir del 2º año). Usa la definición estricta de éxito: ≤ 2 intentos, ≤ 10 min, sin ayuda o solo verbal y sin que el adscrito tome el control.
+          <div className="tiny muted mt8" style={{ lineHeight: 1.5 }}>
+            Cada residente aporta sus intentos según su número de intento (1º–5º, 6º–10º…), con toda la residencia y sin importar el periodo elegido arriba. Es una curva
+            descriptiva, no la curva CUSUM: con ella se estimarán los parámetros locales en el ciclo 2.
           </div>
         </div>
 
@@ -304,6 +300,22 @@ export default function Reports() {
           <Kpi label="Ameritan revisión" value={reviews} hint="marcados por el adscrito" />
           <Kpi label="Riesgo al paciente" value={risks} hint="atribuible al residente" />
         </div>
+        <div className="h2">Base de investigación</div>
+        <div className="card">
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn sm grow" onClick={() => exportResearch(cases)}>
+              <Download size={15} /> Datos seudonimizados
+            </button>
+            <button className="btn sm grow" onClick={() => exportAggregate(cases)}>
+              <Download size={15} /> Agregado por grado
+            </button>
+          </div>
+          <div className="tiny muted mt8">
+            CSV con un renglón por procedimiento: identificadores seudónimos, fecha a nivel de mes y sin nombres, códigos ni texto libre. El agregado trae n, tasa de éxito e
+            IC95% por grado y procedimiento.
+          </div>
+        </div>
+
         <p className="tiny muted mt16">
           Reporte generado a partir de {ev.length} evaluaciones de {new Set(ev.map((c) => c.evaluation.attendingId)).size} adscritos (
           {[...new Set(ev.map((c) => c.evaluation.attendingId))].map((id) => userById(id).name.split(' ')[0]).join(', ')}).

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { useStore } from '../store'
 import { userById } from '../data/users'
-import { ANTS_DOMAINS, ANTS_TARGET, ENTRUSTMENT_TARGET, GRADE_EXPECTATIONS, OSCORE_TARGET, SUPERVISION } from '../data/catalog'
+import { ANTS_DOMAINS, ENTRUSTMENT_TARGET, GRADE_EXPECTATIONS, OSCORE_TARGET, SUPERVISION } from '../data/catalog'
 import {
   antsDomains,
   avg,
@@ -95,17 +95,18 @@ export default function Progress() {
             </span>
             <span>
               <i className="band" style={{ background: 'rgba(12,163,12,.18)' }} />
-              Umbral del grado (≥ {u.grade ? OSCORE_TARGET[u.grade] : '—'})
+              Referencia provisional del grado (≥ {u.grade ? OSCORE_TARGET[u.grade] : '—'})
             </span>
           </div>
           <div className="tiny muted mt8">
-            El O-SCORE se califica por procedimiento; aquí se grafica el promedio de cada caso. 1 = "tuve que hacerlo yo" · 5 = "independiente y seguro".
+            Juicio retrospectivo del adscrito por procedimiento; aquí se grafica el promedio de cada caso. 1 = "tuve que hacerlo yo" · 5 = "no necesité estar presente". La
+            referencia por grado es provisional y sirve para la discusión formativa, no para calificar.
           </div>
         </div>
 
         <div className="grid3 mt12">
-          <Kpi label="O-SCORE" value={sup?.toFixed(1) ?? '—'} hint={u.grade ? `Esperado ≥ ${OSCORE_TARGET[u.grade]}` : undefined} />
-          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint={u.grade ? `Esperado ≥ ${ENTRUSTMENT_TARGET[u.grade]}` : 'por caso'} />
+          <Kpi label="O-SCORE" value={sup?.toFixed(1) ?? '—'} hint={u.grade ? `Referencia ≥ ${OSCORE_TARGET[u.grade]} (provisional)` : undefined} />
+          <Kpi label="Entrustment" value={ent?.toFixed(1) ?? '—'} hint={u.grade ? `Referencia ≥ ${ENTRUSTMENT_TARGET[u.grade]} (provisional)` : 'por caso'} />
           <Kpi label="Mini-CEX" value={jc?.toFixed(1) ?? '—'} hint="juicio clínico 1–5" />
         </div>
 
@@ -116,45 +117,49 @@ export default function Progress() {
 
         <div className="h2">Habilidades no técnicas (ANTS)</div>
         <div className="card">
-          <DomainBars rows={ANTS_DOMAINS.map((d) => ({ label: d.label, value: domains[d.id] }))} max={4} target={u.grade ? ANTS_TARGET[u.grade] : undefined} />
+          <DomainBars rows={ANTS_DOMAINS.map((d) => ({ label: d.label, value: domains[d.id] }))} max={4} />
           <div className="legend">
             <span>
               <i style={{ background: 'var(--series-1)' }} />
               Promedio últimos 20 casos (1–4)
             </span>
-            <span>
-              <i style={{ background: 'var(--ink)', width: 2, height: 12 }} />
-              Esperado para {u.grade}
-            </span>
+          </div>
+          <div className="tiny muted mt8">
+            Referencia formativa: sirve para la discusión con el residente. No tiene umbral, no cuenta para el estado ni dispara alertas (el manual de ANTS no lo recomienda para
+            evaluación sumativa).
           </div>
         </div>
 
-        <div className="h2">Procedimientos · CUSUM</div>
+        <div className="h2">Procedimientos</div>
         <div className="list">
           {procs
             .filter((p) => p.exposure > 0)
             .sort((a, b) => b.exposure - a.exposure)
             .map((p) => {
-              const vals = p.cusum.points.map((x) => x.value)
+              const vals = p.cusum?.points.map((x) => x.value) ?? []
               return (
                 <Link key={p.def.id} to={`${base}/procedimiento/${p.def.id}`} className="list-row">
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="bold">{p.def.short}</div>
                     <div className="tiny muted num">
-                      {p.cusum.n} registros · {Math.round(p.cusum.successRate * 100)}% éxito
+                      {p.attempts.length} validados · tasa de éxito {p.attempts.length ? `${Math.round((p.ok / p.attempts.length) * 100)}%` : '—'}
+                      {p.provisional ? ` · ${p.provisional} por validar` : ''}
                       {p.supervision !== null ? ` · O-SCORE ${p.supervision.toFixed(1)}` : ''}
                     </div>
                     <div style={{ marginTop: 5 }}>
-                      <CusumBadge state={p.cusum.state} />
+                      <CusumBadge state={p.cusum ? p.cusum.state : 'calibracion'} />
                     </div>
                   </div>
-                  <Sparkline values={vals} min={Math.min(p.cusum.h0, ...vals)} max={Math.max(p.cusum.h1, ...vals)} />
+                  {p.cusum && <Sparkline values={vals} min={Math.min(p.cusum.h0, ...vals)} max={Math.max(p.cusum.h1, ...vals)} />}
                   <ChevronRight size={18} className="muted" />
                 </Link>
               )
             })}
         </div>
-        <div className="tiny muted mt8">La curva baja con cada éxito y sube con cada falla. Toca un procedimiento para ver su CUSUM completa.</div>
+        <div className="tiny muted mt8">
+          Solo cuentan los intentos validados por el adscrito. La curva CUSUM baja con cada éxito y sube con cada fallo; los procedimientos en calibración solo muestran la tasa de
+          éxito. Toca uno para ver el detalle.
+        </div>
 
         <div className="h2">Prioridades de mejora recientes</div>
         <div className="card stack">
